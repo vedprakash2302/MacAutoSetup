@@ -1,0 +1,24 @@
+set nocompatible
+syntax on
+filetype plugin indent on
+
+set number
+
+set ignorecase
+set smartcase
+set incsearch
+set hlsearch
+
+set scrolloff=20
+set showcmd
+set wildmenu
+set lazyredraw
+
+set nobackup
+set nowritebackup
+set noswapfile
+
+set clipboard=unnamedplus
+
+set splitright
+set splitbelow
