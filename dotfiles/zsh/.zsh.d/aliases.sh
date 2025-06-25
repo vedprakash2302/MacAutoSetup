@@ -1,5 +1,12 @@
 alias db="cd ~/DB && nvim ~/DB/index.md"
 
+# Prefer GNU tools over BSD ones
+
+# GNU sed
+alias sed="gsed"
+alias awk="gawk"
+
+
 # TODO aliases
 alias todo='todo.sh'
 alias t='todo.sh'
