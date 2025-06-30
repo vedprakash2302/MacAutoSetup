@@ -3,7 +3,7 @@
 -- fit in the normal config locations above can go here
 --
 
-vim.api.nvim_create_augroup("markdown_suffixes", {clear = true})
+vim.api.nvim_create_augroup("markdown_suffixes", { clear = true })
 vim.api.nvim_create_autocmd("FileType", {
   group = "markdown_suffixes",
   pattern = "markdown",
@@ -12,7 +12,7 @@ vim.api.nvim_create_autocmd("FileType", {
 
 -- Harpoon
 local harpoon = require "harpoon"
-harppon:setup()
+harpoon:setup()
 
 vim.keymap.set("n", "<leader>a", function() harpoon:list():add() end)
 vim.keymap.set("n", "<leader>m", function() harpoon.ui:toggle_quick_menu(harpoon:list()) end)

@@ -30,11 +30,11 @@ fi
 # Install Zap ZSH plugin manager
 if [[ ! -d "${XDG_DATA_HOME:-$HOME/.local/share}/zap" ]]; then
   echo "Installing Zap ZSH plugin manager..."
-  zsh <(curl -s https://raw.githubusercontent.com/zap-zsh/zap/master/install.sh) --branch release-v1 --keep
+  zsh <(curl -s https://raw.githubusercontent.com/zap-zsh/zap/master/install.zsh) --branch release-v1
   echo "Removing .zshrc so stow can manage it..."
   rm -f ~/.zshrc
 fi
 
 # Use GNU Stow to symlink dotfiles
 echo "Setting up dotfiles with GNU Stow..."
-stow --target="$HOME" zsh vim nvim aerospace
+stow --target="$HOME" --dir=./dotfiles zsh vim nvim aerospace
