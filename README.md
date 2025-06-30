@@ -3,23 +3,26 @@
 A lean, modern development environment for macOS that brings the Linux tiling window manager experience to Mac — with minimal fuss.
 
 ## ✨ Core Features
-	•	🧠 Raycast — fast launcher & automation
-	•	🪟 Aerospace — tiling window management (like i3, for Mac)
-	•	🖋️ GNU Stow — simple, modular dotfile management
-	•	🧑‍💻 Astronvim — full-featured, sane Neovim IDE config
-	•	🧘 Minimal Vim config — if you want to keep it light
-	•	🧰 Essential GNU utilities — sed, coreutils, gawk, etc.
-	•	🚀 Zsh with Zap — plugin manager for a clean, fast shell
+
+- 🧠 Raycast — fast launcher & automation
+- 🪟 Aerospace — tiling window management (like i3, for Mac)
+- 🖋️ GNU Stow — simple, modular dotfile management
+- 🧑‍💻 Astronvim — full-featured, sane Neovim IDE config
+- 🧘 Minimal Vim config — if you want to keep it light
+- 🧰 Essential GNU utilities — sed, coreutils, gawk, etc.
+- 🚀 Zsh with Zap — plugin manager for a clean, fast shell
 
 
 ## 🎯 Philosophy
-	•	Terminal-first, keyboard-driven workflow
-	•	Get up and running fast
-	•	Modular, understandable configuration — no hidden magic
-	•	LOW configuration (I use tmux a lot but 0 config for it) for improved portability
-	•	Dotfile hygiene - I yoinked the .zsh.d idea from a youtube video that I have 
+
+- Terminal-first, keyboard-driven workflow
+- Get up and running fast
+- Modular, understandable configuration — no hidden magic
+- LOW configuration (I use tmux a lot but 0 config for it) for improved portability
+- Dotfile hygiene - I yoinked the .zsh.d idea from a youtube video that I have 
 forgotten but would LOVE to credit. If someone knows the video on "the dot problem" 
 or something like that, please point that out to me and let me know!
+
 
 ### You may be asking, why astronvim? Aren't you a vim nerd who handles his own config
 
@@ -63,13 +66,13 @@ cd ~/Projects/MacAutoSetup
 
 ### 🌀 If you only have curl (fresh macOS install)
 
-`bash <(curl -fsSL https://raw.githubusercontent.com/NLaundry/MacAutoSetup/main/bootstrap-nogit.sh)`
+```bash <(curl -fsSL https://raw.githubusercontent.com/NLaundry/MacAutoSetup/main/bootstrap-nogit.sh)```
 
 This will:
-	1.	Install Xcode CLI tools (for Git)
-	2.	Install Homebrew
-	3.	Clone this repo
-	4.	Run the full setup
+1. Install Xcode CLI tools (for Git)
+2. Install Homebrew
+3. Clone this repo
+4. Run the full setup
 
 
 ## 📦 What Gets Installed
@@ -99,6 +102,7 @@ Dotfiles are managed using GNU Stow.
 
 Directory structure:
 
+```
 dotfiles/
 ├── zsh/
 ├── nvim/        # Minimal Neovim config
@@ -107,16 +111,20 @@ dotfiles/
 ├── iterm2/
 ├── ghostty/
 └── …
+```
 
 Each folder maps to $HOME. For example:
 
-stow –target=$HOME zsh nvim ghostty …
+```
+stow –target=$HOME zsh nvim ghostty
+```
 
 creates symlinks for config files in your home directory.
 
 ## ✅ Result
-	•	Feels like Arch or Debian with i3, but polished for Mac
-	•	Astronvim or minimal Vim: pick your workflow
-	•	Tiling window control and keybindings
-	•	Clean terminal with Nerd Font and modern CLI tools
-	•	Shell and dev tools ready for Python, Node, AWS, and Kubernetes
+
+- Feels like Arch or Debian with i3, but polished for Mac
+- Astronvim or minimal Vim: pick your workflow
+- Tiling window control and keybindings
+- Clean terminal with Nerd Font and modern CLI tools
+- Shell and dev tools ready for Python, Node, AWS, and Kubernetes
