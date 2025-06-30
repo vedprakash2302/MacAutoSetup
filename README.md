@@ -4,13 +4,13 @@ A lean, modern development environment for macOS that brings the Linux tiling wi
 
 ## ✨ Core Features
 
+- 🚀 Zsh with Zap — plugin manager for a clean, fast shell
 - 🧠 Raycast — fast launcher & automation
 - 🪟 Aerospace — tiling window management (like i3, for Mac)
-- 🖋️ GNU Stow — simple, modular dotfile management
 - 🧑‍💻 Astronvim — full-featured, sane Neovim IDE config
 - 🧘 Minimal Vim config — if you want to keep it light
+- 🖋️ GNU Stow — simple, modular dotfile management
 - 🧰 Essential GNU utilities — sed, coreutils, gawk, etc.
-- 🚀 Zsh with Zap — plugin manager for a clean, fast shell
 
 
 ## 🎯 Philosophy
