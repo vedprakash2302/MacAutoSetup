@@ -66,7 +66,9 @@ cd ~/Projects/MacAutoSetup
 
 ### 🌀 If you only have curl (fresh macOS install)
 
-```bash <(curl -fsSL https://raw.githubusercontent.com/NLaundry/MacAutoSetup/main/bootstrap-nogit.sh)```
+```
+bash <(curl -fsSL https://raw.githubusercontent.com/NLaundry/MacAutoSetup/main/bootstrap-nogit.sh)
+```
 
 This will:
 1. Install Xcode CLI tools (for Git)
