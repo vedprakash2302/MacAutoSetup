@@ -40,6 +40,11 @@ cask "docker"
 cask "ghostty"
 cask "aerospace"
 cask "caffeine"
+cask "discord"
+cask "chatgpt"
+cask "shottr"
+cask "caffeine" 
+# cash "zoom" - I don't want to install this by default
 
 # Fonts
 cask "font-jetbrains-mono-nerd-font"
