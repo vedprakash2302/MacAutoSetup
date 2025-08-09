@@ -1,2 +1,11 @@
+# Fonts
+font-family = "JetBrains Mono"
 font-size = 16
+
 window-padding-x = 8
+
+
+# Theme
+background-opacity = 0.8
+background-blur = true
+theme = catppuccin-mocha.conf

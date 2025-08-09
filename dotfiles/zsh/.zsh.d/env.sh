@@ -5,3 +5,6 @@ export EDITOR=vim
 export PATH="/opt/homebrew/opt/coreutils/libexec/gnubin:$PATH"
 # GNU findutils (find, xargs, etc.)
 export PATH="/opt/homebrew/opt/findutils/libexec/gnubin:$PATH"
+
+# Starship config
+export STARSHIP_CONFIG="$HOME/.config/starship/starship.toml"
