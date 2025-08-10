@@ -4,6 +4,9 @@ tap "jorgerojas26/lazysql"
 # CLI Tools
 brew "git"
 brew "fzf"
+brew "fd"
+brew "luarocks"
+brew "wget"
 brew "ripgrep"
 brew "bat"
 brew "btop"
@@ -18,6 +21,7 @@ brew "tmux"
 brew "stow"
 brew "neovim"
 brew "starship"
+brew "zoxide"
 
 # Languages n stuff
 brew "python"
@@ -33,6 +37,7 @@ brew "gawk"
 
 # GUI Applications
 cask "cursor"
+cask "warp"
 cask "raycast"
 cask "docker"
 cask "ghostty"
