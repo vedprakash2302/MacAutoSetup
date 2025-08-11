@@ -44,3 +44,7 @@ stow --target="$HOME" --dir=./dotfiles zsh vim nvim aerospace starship ghostty
 
 # Optionally restart the shell
 exec zsh -l
+
+# Set macOS settings
+echo "Setting macOS settings..."
+./dotfiles/macos/setup-commands.sh
