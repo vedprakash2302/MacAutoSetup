@@ -8,5 +8,8 @@ plug "MichaelAquilina/zsh-you-should-use"
 plug "wintermi/zsh-starship"
 plug "zap-zsh/exa"
 
+# Install tmux plugin manager
+[ -f "$HOME/.tmux/plugins/tpm" ] && git clone https://github.com/tmux-plugins/tpm ~/.tmux/plugins/tpm
+
 autoload -Uz compinit
 compinit
