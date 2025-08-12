@@ -13,27 +13,16 @@ return {
           exclude = {
             "**/.git/*",
             "**/node_modules/*",
+            "**/.turbo/cache/*",
+            "**/dist/*",
+            "**/build/*",
+            "**/.husky/_/*",
           },
         },
       },
     },
     quickfile = { enabled = true },
     terminal = { enabled = true },
-  },
-  keys = {
-    {
-      "<c-/>",
-      function()
-        Snacks.terminal()
-      end,
-      desc = "Toggle Terminal",
-    },
-    {
-      "<c-_>",
-      function()
-        Snacks.terminal()
-      end,
-      desc = "which_key_ignore",
-    },
+    dashboard = { enabled = true },
   },
 }

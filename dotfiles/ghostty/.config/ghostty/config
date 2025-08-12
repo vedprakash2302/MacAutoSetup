@@ -1,11 +1,40 @@
 # Fonts
 font-family = "JetBrains Mono"
-font-size = 16
+font-style = medium
+font-size = 14
 
-window-padding-x = 8
-
+# window
+window-width = 160
+window-height = 50
+window-padding-y = 8, 0
+initial-window = true
+resize-overlay = never
+background-opacity = 0.85
+window-save-state = always
+window-step-resize = false
+background-blur = true
+background-blur-radius = 15
+confirm-close-surface = false
 
 # Theme
-background-opacity = 0.9
-background-blur = true
-theme = catppuccin-mocha.conf
+theme = gotham-default 
+bold-is-bright = true
+macos-icon = holographic 
+background-blur-radius = 15
+
+# Keybindings
+keybind = global:cmd+option+grave_accent=toggle_quick_terminal
+
+# behavior
+auto-update = check
+auto-update-channel = stable
+quit-after-last-window-closed = true
+shell-integration-features = true
+
+# macos
+macos-option-as-alt = true
+macos-titlebar-style = hidden
+
+# clipboard
+copy-on-select = clipboard
+clipboard-trim-trailing-spaces = true
