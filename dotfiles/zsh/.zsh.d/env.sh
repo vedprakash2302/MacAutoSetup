@@ -1,3 +1,9 @@
+# History setup
+export HISTFILE=$HOME/.zhistory
+export SAVEHIST=100000
+export HISTSIZE=100000
+
+# Editor setup
 export GIT_EDITOR=nvim
 export EDITOR=nvim
 

@@ -47,6 +47,9 @@ cask "caffeine"
 cask "chatgpt"
 cask "shottr"
 cask "caffeine" 
+cask "focus"
+cask "craft"
+
 # cash "zoom" - I don't want to install this by default
 
 # Fonts

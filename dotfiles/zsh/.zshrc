@@ -4,8 +4,9 @@ for config_file in ~/.zsh.d/*.sh; do
   [ -r "$config_file" ] && source "$config_file"
 done
 
-
-# After compinit
+# Zsh compinit
+autoload -Uz compinit
+compinit -u
 
 # Zoxide
 eval "$(zoxide init zsh)"
