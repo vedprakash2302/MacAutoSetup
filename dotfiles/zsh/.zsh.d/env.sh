@@ -1,5 +1,5 @@
-export GIT_EDITOR=vim
-export EDITOR=vim
+export GIT_EDITOR=nvim
+export EDITOR=nvim
 
 # GNU coreutils (ls, cat, etc.)
 export PATH="/opt/homebrew/opt/coreutils/libexec/gnubin:$PATH"

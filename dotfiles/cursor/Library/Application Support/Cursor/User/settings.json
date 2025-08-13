@@ -32,7 +32,6 @@
   "workbench.activityBar.location": "hidden",
   "workbench.editor.editorActionsLocation": "hidden",
   "vsicons.dontShowNewVersionMessage": true,
-  "workbench.colorTheme": "SynthWave '84",
   "editor.wordWrap": "on",
   "editor.minimap.enabled": true,
   "python.languageServer": "None",
@@ -74,5 +73,6 @@
   "debug.javascript.autoAttachFilter": "onlyWithFlag",
   "explorer.compactFolders": false,
   "explorer.confirmDragAndDrop": false,
-  "editor.fontLigatures": false
+  "editor.fontLigatures": false,
+  "workbench.colorTheme": "SynthWave '84"
 }
