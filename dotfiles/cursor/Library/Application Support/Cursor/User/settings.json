@@ -1,7 +1,7 @@
 {
   "explorer.confirmDelete": false,
   "editor.fontSize": 14,
-  "editor.fontFamily": "'JetBrains Mono', Menlo, Monaco, 'Courier New', monospace",
+  "editor.fontFamily": "'JetBrainsMono Nerd Font', Menlo, Monaco, 'Courier New', monospace",
   "editor.formatOnSave": true,
   "editor.formatOnPaste": true,
   "editor.defaultFormatter": "esbenp.prettier-vscode",
@@ -35,7 +35,7 @@
   "workbench.colorTheme": "SynthWave '84",
   "editor.wordWrap": "on",
   "editor.minimap.enabled": true,
-  "python.languageServer": "Pylance",
+  "python.languageServer": "None",
   "git.mergeEditor": true,
   "diffEditor.renderSideBySide": true,
   "cursor.composer.shouldAllowCustomModes": true,
