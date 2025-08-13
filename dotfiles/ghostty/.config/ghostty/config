@@ -7,20 +7,21 @@ font-size = 14
 window-width = 160
 window-height = 50
 window-padding-y = 8, 0
+window-padding-x = 8, 8
 initial-window = true
 resize-overlay = never
 background-opacity = 0.85
 window-save-state = always
 window-step-resize = false
 background-blur = true
-background-blur-radius = 15
+background-blur-radius = 25
 confirm-close-surface = false
 
 # Theme
-theme = gotham-default 
+theme = GruvboxDarkHard
 bold-is-bright = true
 macos-icon = holographic 
-background-blur-radius = 15
+background-blur-radius = 30
 
 # Keybindings
 keybind = global:cmd+option+grave_accent=toggle_quick_terminal

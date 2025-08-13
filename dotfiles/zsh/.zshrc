@@ -9,3 +9,6 @@ done
 
 # Zoxide
 eval "$(zoxide init zsh)"
+
+# FZF
+eval "$(fzf --zsh)"
