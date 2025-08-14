@@ -42,13 +42,14 @@ eval "$(/opt/homebrew/bin/brew shellenv)"
 echo "Setting up dotfiles with GNU Stow..."
 stow --target="$HOME" --dir=./dotfiles zsh vim nvim aerospace starship ghostty tmux warp cursor
 
-
 # Set macOS settings
 echo "Setting macOS settings..."
+chmod +x ./dotfiles/macos/setup-commands.sh
 ./dotfiles/macos/setup-commands.sh
 
 # Setup Cursor extensions
-cat  ./dotfiles/cursor/sync-extensions.txt | xargs -L 1 code --install-extension
+echo "Installing cursor sync-extensions"
+cat ./dotfiles/cursor/.cursor/sync-extensions.txt | xargs -L 1 cursor --install-extension
 
 # Optionally restart the shell
 exec zsh -l

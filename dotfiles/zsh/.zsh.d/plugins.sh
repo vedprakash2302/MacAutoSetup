@@ -11,4 +11,4 @@ plug "zap-zsh/completions"
 plug "zsh-users/zsh-history-substring-search"
 
 # Install tmux plugin manager
-[ -f "$HOME/.tmux/plugins/tpm" ] && git clone https://github.com/tmux-plugins/tpm ~/.tmux/plugins/tpm
+[ ! -d "$HOME/.tmux/plugins/tpm" ] && echo "Installing tmux plugin manager" && git clone https://github.com/tmux-plugins/tpm ~/.tmux/plugins/tpm
