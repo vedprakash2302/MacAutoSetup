@@ -1,5 +1,6 @@
 tap "nikitabobko/tap" # Aerospace
 tap "jorgerojas26/lazysql" 
+tap "FelixKratz/formulae"
 
 # CLI Tools
 brew "git"
@@ -23,6 +24,7 @@ brew "stow"
 brew "neovim"
 brew "starship"
 brew "zoxide"
+brew "borders"
 
 # Languages n stuff
 brew "python"
