@@ -1,17 +1,49 @@
-
+-- return {
+--   -- add gruvbox
+--   { "ellisonleao/gruvbox.nvim",
+--     opts = {
+--       transparent_mode = true,
+--     },
+--   },
+--
+--   -- Configure LazyVim to load gruvbox
+--   {
+--     "LazyVim/LazyVim",
+--     opts = {
+--       colorscheme = "gruvbox",
+--     },
+--   }
+-- }
+--
 return {
   -- add gruvbox
-  { "ellisonleao/gruvbox.nvim",
+  {
+    "catppuccin/nvim",
+    name = "catppuccin",
+    priority = 1000,
     opts = {
-      transparent_mode = true,
+      flavour = "mocha", -- latte, frappe, macchiato, mocha
+      transparent_background = true,
+      float = {
+        transparent = true, -- enable transparent floating windows
+        solid = false, -- use solid styling for floating windows, see |winborder|
+      },
+      auto_integrations = true,
+      term_colors = true,
+      styles = {
+        comments = { "italic" },
+        conditionals = { "italic" },
+        loops = { "italic" },
+        functions = { "italic" },
+        keywords = { "italic" },
+      },
     },
   },
-
   -- Configure LazyVim to load gruvbox
   {
     "LazyVim/LazyVim",
     opts = {
-      colorscheme = "gruvbox",
+      colorscheme = "catppuccin",
     },
-  }
+  },
 }

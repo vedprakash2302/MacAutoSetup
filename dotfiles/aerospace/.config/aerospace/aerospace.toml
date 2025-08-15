@@ -99,24 +99,29 @@ alt-2 = 'workspace --auto-back-and-forth 2'
 alt-3 = 'workspace --auto-back-and-forth 3'
 alt-4 = 'workspace --auto-back-and-forth 4'
 alt-5 = 'workspace --auto-back-and-forth 5'
-alt-6 = 'workspace --auto-back-and-forth 6'
-alt-7 = 'workspace --auto-back-and-forth 7'
-alt-8 = 'workspace --auto-back-and-forth 8'
 
 alt-shift-1 = 'move-node-to-workspace 1'
 alt-shift-2 = 'move-node-to-workspace 2'
 alt-shift-3 = 'move-node-to-workspace 3'
 alt-shift-4 = 'move-node-to-workspace 4'
 alt-shift-5 = 'move-node-to-workspace 5'
-alt-shift-6 = 'move-node-to-workspace 6'
-alt-shift-7 = 'move-node-to-workspace 7'
-alt-shift-8 = 'move-node-to-workspace 8'
-alt-shift-9 = 'move-node-to-workspace 9'
 
 alt-tab = 'workspace-back-and-forth'
 alt-shift-tab = 'move-workspace-to-monitor --wrap-around next'
 
 alt-shift-semicolon = 'mode service'
+
+[workspace-to-monitor-force-assignment]
+
+1 = ['secondary', 'main']
+2 = 'main'
+3 = ['secondary', 'main']
+4 = 'main'
+5 = 'main'
+6 = ['secondary', 'main']
+7 = ['secondary', 'main']
+8 = ['secondary', 'main']
+9 = ['secondary', 'main']
 
 
 # 'service' binding mode declaration.
@@ -130,35 +135,46 @@ f = [
 ] # Toggle between floating and tiling layout
 backspace = ['close-all-windows-but-current', 'mode main']
 
-
-# Workspace 1
 [[on-window-detected]]
+if.app-name-regex-substring = 'Arc'
+run = ['layout floating']
+
+[[on-window-detected]]
+if.app-name-regex-substring = 'Craft'
 if.app-id = 'com.lukilabs.lukiapp'
 run = ['layout tiling', 'move-node-to-workspace 1']
 
-# Workspace 2
 [[on-window-detected]]
-if.app-id = 'com.kishanbagaria.jack'
+if.app-name-regex-substring = 'Slack'
+run = ['layout tiling', 'move-node-to-workspace 1']
+
+[[on-window-detected]]
+if.app-name-regex-substring = 'Outlook'
+run = ['layout tiling', 'move-node-to-workspace 1']
+
+[[on-window-detected]]
+if.app-name-regex-substring = 'Zoom'
+run = ['layout floating', 'move-node-to-workspace 1']
+
+[[on-window-detected]]
+if.app-name-regex-substring = 'Linear'
+run = ['layout tiling', 'move-node-to-workspace 1']
+
+[[on-window-detected]]
+if.app-name-regex-substring = 'Cursor'
 run = ['layout tiling', 'move-node-to-workspace 3']
 
 [[on-window-detected]]
-if.app-id = 'com.cron.electron'
+if.app-name-regex-substring = 'Ghostty'
 run = ['layout tiling', 'move-node-to-workspace 3']
 
 [[on-window-detected]]
-if.app-id = 'com.linear'
+if.app-name-regex-substring = 'Warp'
 run = ['layout tiling', 'move-node-to-workspace 3']
 
-
-# Workspace 3
 [[on-window-detected]]
-
-if.app-id = 'com.todesktop.230313mzl4w4u92'
-run = ['layout tiling', 'move-node-to-workspace 2']
-
-[[on-window-detected]]
-if.app-id = 'dev.warp.Warp-Stable'
-run = ['layout floating', 'move-node-to-workspace 2']
+if.app-name-regex-substring = 'Finder'
+run = ['layout floating']
 
 
 # Floating

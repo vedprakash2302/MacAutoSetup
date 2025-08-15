@@ -51,6 +51,8 @@ cask "shottr"
 cask "caffeine" 
 cask "focus"
 cask "craft"
+cask "hiddenbar"
+cask "flux-app"
 
 # cash "zoom" - I don't want to install this by default
 
