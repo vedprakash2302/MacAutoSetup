@@ -4,3 +4,5 @@
 
 vim.g.root_spec = { "cwd" }
 vim.opt.wrap = true
+
+vim.g.transparent_enabled = true
