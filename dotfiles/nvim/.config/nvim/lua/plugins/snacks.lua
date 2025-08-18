@@ -19,6 +19,14 @@ return {
             "**/.husky/_/*",
           },
         },
+        explorer = {
+          layout = {
+            layout = {
+              width = 30,
+            }
+          }
+        }
+
       },
     },
     quickfile = { enabled = true },
