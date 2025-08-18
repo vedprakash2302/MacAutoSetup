@@ -17,9 +17,8 @@ background-blur-radius = 25
 confirm-close-surface = false
 
 # Theme
-#theme = GruvboxDarkHard
+theme = GruvboxDarkHard
 
-theme = Dracula+ 
 bold-is-bright = true
 macos-icon = holographic 
 background-blur-radius = 30
