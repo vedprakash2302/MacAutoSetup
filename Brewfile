@@ -26,6 +26,7 @@ brew "neovim"
 brew "starship"
 brew "zoxide"
 brew "borders"
+brew "bitwarden-cli"
 
 # Languages n stuff
 brew "python"
@@ -55,7 +56,7 @@ cask "craft"
 cask "hiddenbar"
 cask "flux-app"
 
-# cash "zoom" - I don't want to install this by default
+# cask "zoom" - I don't want to install this by default
 
 # Fonts
 cask "font-jetbrains-mono-nerd-font"

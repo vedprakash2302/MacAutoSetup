@@ -1,15 +1,19 @@
-#################### Keyboard related settings
+#################### Keyboard related settings ####################
 defaults write NSGlobalDomain KeyRepeat -int 1
 defaults write NSGlobalDomain InitialKeyRepeat -int 15
 defaults write NSGlobalDomain ApplePressAndHoldEnabled -bool false
 # Fn key usage
-defaults write com.apple.HIToolbox AppleFnUsageType -int "0"
+defaults write com.apple.HIToolbox AppleFnUsageType -int "1"
 # F1, F2, etc. as function keys
 # defaults write NSGlobalDomain com.apple.keyboard.fnState -bool true
 # Keyboard navigation
 defaults write NSGlobalDomain AppleKeyboardUIMode -int 2
 
-#################### Trackpad related settings
+# Import keyboard shortcuts
+defaults import com.apple.symbolichotkeys ./dotfiles/macos/keyboard-shortcuts.xml
+/System/Library/PrivateFrameworks/SystemAdministration.framework/Resources/activateSettings -u
+
+#################### Trackpad related settings ####################
 defaults write -globalDomain "com.apple.mouse.scaling" -int 2
 defaults write -globalDomain "com.apple.trackpad.scaling" -int 2
 defaults write com.apple.driver.AppleBluetoothMultitouch.trackpad "Clicking" -bool true
@@ -25,7 +29,7 @@ defaults write com.apple.driver.AppleBluetoothMultitouch.trackpad TrackpadThreeF
 defaults write -g com.apple.mouse.scaling 3
 defaults write -g com.apple.trackpad.scaling 3
 
-#################### Finder related settings
+#################### Finder related settings ####################
 defaults write com.apple.Finder AppleShowAllFiles -bool true
 defaults write NSGlobalDomain AppleShowAllExtensions -bool true
 defaults write com.apple.finder ShowPathbar -bool true
@@ -47,7 +51,7 @@ defaults write com.apple.desktopservices DSDontWriteNetworkStores true
 
 
 
-#################### Dock related settings
+#################### Dock related settings ####################
 defaults write com.apple.dock autohide -bool true
 defaults write com.apple.dock "show-recents" -bool false
 # Change minimize/maximize window effect
@@ -73,18 +77,26 @@ defaults write com.apple.dock showhidden -bool true
 # Don’t show recent applications in Dock
 defaults write com.apple.dock show-recents -bool false
 # Dock size
-defaults write com.apple.dock tilesize -int 36
+defaults write com.apple.dock tilesize -int 48
 # Spring loading
 defaults write com.apple.dock "enable-spring-load-actions-on-all-items" -bool "true"
 
 
-#################### Other settings
+
+#################### Desktop related settings ####################
+defaults write com.apple.finder "_FXSortFoldersFirstOnDesktop" -bool "true" 
+defaults write com.apple.finder "ShowExternalHardDrivesOnDesktop" -bool "false" 
+defaults write com.apple.finder "ShowRemovableMediaOnDesktop" -bool "false" 
+
+
+
+#################### Other settings ####################
 defaults write com.apple.dock "expose-group-apps" -bool "true"
 
 
 
 
-#################### Application related settings
+#################### Application related settings ####################
 
 # # Set up my preferred keyboard shortcuts
 # cp -r init/spectacle.json ~/Library/Application\ Support/Spectacle/Shortcuts.json 2> /dev/null

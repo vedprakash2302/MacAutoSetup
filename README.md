@@ -2,6 +2,12 @@
 
 ## ⚙️ Prepare First (From the old Mac)
 
+### 🔄 Backup you current configured default keyboard shortcuts
+
+```sh
+defaults export com.apple.symbolichotkeys - > ./dotfiles/macos/keyboard-shortcuts.xml
+```
+
 ### 🔗 Sync Cursor/VS Code extensiosns:
 
 You will first need to extract the list of extensions you have using the following command:
