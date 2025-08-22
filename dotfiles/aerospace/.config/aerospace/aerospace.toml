@@ -20,7 +20,7 @@ enable-normalization-opposite-orientation-for-nested-containers = true
 
 # The 'accordion-padding' specifies the size of accordion padding
 # You can set 0 to disable the padding feature
-accordion-padding = 70
+accordion-padding = 150
 
 # Possible values: tiles|accordion
 default-root-container-layout = 'tiles'
@@ -114,14 +114,10 @@ alt-shift-semicolon = 'mode service'
 [workspace-to-monitor-force-assignment]
 
 1 = ['secondary', 'main']
-2 = 'main'
+2 = ['secondary', 'main']
 3 = ['secondary', 'main']
 4 = 'main'
 5 = 'main'
-6 = ['secondary', 'main']
-7 = ['secondary', 'main']
-8 = ['secondary', 'main']
-9 = ['secondary', 'main']
 
 
 # 'service' binding mode declaration.
@@ -135,26 +131,31 @@ f = [
 ] # Toggle between floating and tiling layout
 backspace = ['close-all-windows-but-current', 'mode main']
 
-[[on-window-detected]]
-if.app-name-regex-substring = 'Arc'
-run = ['layout floating']
-
-[[on-window-detected]]
-if.app-name-regex-substring = 'Craft'
-if.app-id = 'com.lukilabs.lukiapp'
-run = ['layout tiling', 'move-node-to-workspace 1']
-
-[[on-window-detected]]
-if.app-name-regex-substring = 'Slack'
-run = ['layout tiling', 'move-node-to-workspace 1']
 
 [[on-window-detected]]
 if.app-name-regex-substring = 'Outlook'
-run = ['layout tiling', 'move-node-to-workspace 1']
+run = ['layout floating', 'move-node-to-workspace 1']
 
 [[on-window-detected]]
 if.app-name-regex-substring = 'Zoom'
 run = ['layout floating', 'move-node-to-workspace 1']
+
+[[on-window-detected]]
+if.app-name-regex-substring = 'Finder'
+run = ['layout floating']
+
+[[on-window-detected]]
+if.app-name-regex-substring = 'Ghostty'
+run = ['layout floating', 'move-node-to-workspace 3']
+
+[[on-window-detected]]
+if.app-name-regex-substring = 'Craft'
+if.app-id = 'com.lukilabs.lukiapp'
+run = ['layout tiling', 'move-node-to-workspace 2']
+
+[[on-window-detected]]
+if.app-name-regex-substring = 'Slack'
+run = ['layout tiling', 'move-node-to-workspace 1']
 
 [[on-window-detected]]
 if.app-name-regex-substring = 'Linear'
@@ -165,16 +166,8 @@ if.app-name-regex-substring = 'Cursor'
 run = ['layout tiling', 'move-node-to-workspace 3']
 
 [[on-window-detected]]
-if.app-name-regex-substring = 'Ghostty'
-run = ['layout tiling', 'move-node-to-workspace 3']
-
-[[on-window-detected]]
 if.app-name-regex-substring = 'Warp'
 run = ['layout tiling', 'move-node-to-workspace 3']
-
-[[on-window-detected]]
-if.app-name-regex-substring = 'Finder'
-run = ['layout floating']
 
 
 # Floating
