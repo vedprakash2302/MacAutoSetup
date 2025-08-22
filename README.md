@@ -39,7 +39,7 @@ cd ~/Projects/MacAutoSetup
 Run this single command on a fresh remote Linux server. It will detect your distro, install required CLI tools, install Starship and Zap, clone this repo, and stow terminal dotfiles.
 
 ```sh
-INSTALL_LAZYDOCKER=0 MAC_AUTOSETUP_REPO_URL='https://github.com/vedprakash2302/MacAutoSetup.git' bash -c "$(curl -fsSL https://raw.githubusercontent.com/vedprakash2302/MacAutoSetup/main/bootstrap-linux.sh)"
+INSTALL_LAZYDOCKER=0 MAC_AUTOSETUP_REPO_URL='https://github.com/vedprakash2302/MacAutoSetup.git' bash <(curl -fsSL https://raw.githubusercontent.com/vedprakash2302/MacAutoSetup/main/bootstrap-linux.sh)
 ```
 
 Notes:

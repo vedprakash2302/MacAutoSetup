@@ -82,29 +82,50 @@ ensure_stow() {
 	fi
 
 	echo "Ensuring GNU Stow is installed..."
+	# Detect distro for special-casing Amazon Linux 2023
+	OS_ID=""
+	OS_VERSION_ID=""
+	if [[ -f /etc/os-release ]]; then
+		# shellcheck disable=SC1091
+		. /etc/os-release
+		OS_ID="${ID:-}"
+		OS_VERSION_ID="${VERSION_ID:-}"
+	fi
+
 	case "$PKG_MGR" in
 		apt)
 			sudo apt-get install -y stow
 			;;
 		dnf)
-			# Try native repo first
-			sudo dnf install -y stow || {
-				# Enable EPEL for EL9-compatible systems (Amazon Linux 2023)
-				sudo dnf install -y epel-release || sudo dnf install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm || true
-				sudo dnf makecache -y || true
-				sudo dnf install -y stow || {
-					# Fallback: build from source (Perl-based)
-					echo "Installing stow from source..."
-					tmpdir=$(mktemp -d)
-					curl -fsSL https://ftp.gnu.org/gnu/stow/stow-latest.tar.gz -o "$tmpdir/stow.tar.gz"
-					tar -xzf "$tmpdir/stow.tar.gz" -C "$tmpdir"
-					cd "$tmpdir"/stow-* || exit 1
-					sudo dnf install -y make perl || true
-					perl Makefile.PL PREFIX=/usr/local
-					make
-					sudo make install
+			if [[ "$OS_ID" == "amzn" && "$OS_VERSION_ID" != "2" ]]; then
+				# Amazon Linux 2023+ (not AL2): stow not in repos; build from source directly
+				echo "Installing stow from source on Amazon Linux (2023+)..."
+				tmpdir=$(mktemp -d)
+				curl -fsSL https://ftp.gnu.org/gnu/stow/stow-latest.tar.gz -o "$tmpdir/stow.tar.gz"
+				tar -xzf "$tmpdir/stow.tar.gz" -C "$tmpdir"
+				cd "$tmpdir"/stow-* || exit 1
+				sudo dnf install -y make perl tar gzip || true
+				perl Makefile.PL PREFIX=/usr/local
+				make
+				sudo make install
+			else
+				# Other dnf-based distros: try repo, then EPEL, then source
+				sudo dnf install -y stow >/dev/null 2>&1 || {
+					sudo dnf install -y epel-release >/dev/null 2>&1 || sudo dnf install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm >/dev/null 2>&1 || true
+					sudo dnf makecache -y >/dev/null 2>&1 || true
+					sudo dnf install -y stow >/dev/null 2>&1 || {
+						echo "Installing stow from source..."
+						tmpdir=$(mktemp -d)
+						curl -fsSL https://ftp.gnu.org/gnu/stow/stow-latest.tar.gz -o "$tmpdir/stow.tar.gz"
+						tar -xzf "$tmpdir/stow.tar.gz" -C "$tmpdir"
+						cd "$tmpdir"/stow-* || exit 1
+						sudo dnf install -y make perl tar gzip || true
+						perl Makefile.PL PREFIX=/usr/local
+						make
+						sudo make install
+					}
 				}
-			}
+			fi
 			;;
 		yum)
 			# RHEL/CentOS older flavors
@@ -117,7 +138,7 @@ ensure_stow() {
 					curl -fsSL https://ftp.gnu.org/gnu/stow/stow-latest.tar.gz -o "$tmpdir/stow.tar.gz"
 					tar -xzf "$tmpdir/stow.tar.gz" -C "$tmpdir"
 					cd "$tmpdir"/stow-* || exit 1
-					sudo yum install -y make perl || true
+					sudo yum install -y make perl tar gzip || true
 					perl Makefile.PL PREFIX=/usr/local
 					make
 					sudo make install
