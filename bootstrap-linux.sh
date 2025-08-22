@@ -48,7 +48,7 @@ esac
 
 # Install base packages
 install_packages() {
-	local packages=(git curl zsh stow tmux)
+	local packages=(git curl zsh tmux)
 
 	case "$PKG_MGR" in
 		apt)
@@ -74,6 +74,74 @@ install_packages() {
 }
 
 install_packages
+
+# Ensure GNU Stow is available (handles Amazon Linux 2023/EPEL case)
+ensure_stow() {
+	if command -v stow &>/dev/null; then
+		return
+	fi
+
+	echo "Ensuring GNU Stow is installed..."
+	case "$PKG_MGR" in
+		apt)
+			sudo apt-get install -y stow
+			;;
+		dnf)
+			# Try native repo first
+			sudo dnf install -y stow || {
+				# Enable EPEL for EL9-compatible systems (Amazon Linux 2023)
+				sudo dnf install -y epel-release || sudo dnf install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm || true
+				sudo dnf makecache -y || true
+				sudo dnf install -y stow || {
+					# Fallback: build from source (Perl-based)
+					echo "Installing stow from source..."
+					tmpdir=$(mktemp -d)
+					curl -fsSL https://ftp.gnu.org/gnu/stow/stow-latest.tar.gz -o "$tmpdir/stow.tar.gz"
+					tar -xzf "$tmpdir/stow.tar.gz" -C "$tmpdir"
+					cd "$tmpdir"/stow-* || exit 1
+					sudo dnf install -y make perl || true
+					perl Makefile.PL PREFIX=/usr/local
+					make
+					sudo make install
+				}
+			}
+			;;
+		yum)
+			# RHEL/CentOS older flavors
+			sudo yum install -y stow || {
+				sudo yum install -y epel-release || true
+				sudo yum makecache -y || true
+				sudo yum install -y stow || {
+					echo "Installing stow from source..."
+					tmpdir=$(mktemp -d)
+					curl -fsSL https://ftp.gnu.org/gnu/stow/stow-latest.tar.gz -o "$tmpdir/stow.tar.gz"
+					tar -xzf "$tmpdir/stow.tar.gz" -C "$tmpdir"
+					cd "$tmpdir"/stow-* || exit 1
+					sudo yum install -y make perl || true
+					perl Makefile.PL PREFIX=/usr/local
+					make
+					sudo make install
+				}
+			}
+			;;
+		pacman)
+			sudo pacman -S --needed --noconfirm stow
+			;;
+		zypper)
+			sudo zypper install -y stow
+			;;
+		*)
+			echo "[warn] Unknown package manager; please install stow manually."
+			;;
+	esac
+
+	if ! command -v stow &>/dev/null; then
+		echo "[error] Failed to install GNU Stow. Exiting."
+		exit 1
+	fi
+}
+
+ensure_stow
 
 # Install editor with fallback: prefer neovim, fallback to vim when unavailable
 install_editor() {
