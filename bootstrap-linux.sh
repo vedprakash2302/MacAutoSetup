@@ -447,7 +447,7 @@ install_amazon_linux_fallbacks() {
         rm -f fd fd.tar.gz || warn "Failed to install fd, skipping..."
     fi
     
-    # Install stow (try multiple methods)
+    # Install stow (try multiple methods, but don't fail if it doesn't work)
     if ! command -v stow &> /dev/null; then
         log "Installing stow..."
         
@@ -462,10 +462,14 @@ install_amazon_linux_fallbacks() {
                 log "Trying to install stow from EPEL..."
                 sudo $PKG_INSTALL stow --enablerepo=epel || {
                     log "EPEL installation failed, trying from source..."
-                    install_stow_from_source
+                    install_stow_from_source || {
+                        warn "All stow installation methods failed, will use manual dotfiles setup"
+                    }
                 }
             else
-                install_stow_from_source
+                install_stow_from_source || {
+                    warn "Stow installation from source failed, will use manual dotfiles setup"
+                }
             fi
         }
     else
@@ -546,6 +550,7 @@ install_stow_from_source() {
                     return 0
                 fi
             fi
+            warn "All stow installation methods failed, manual dotfiles setup will be used"
             cd /tmp && rm -rf "$temp_dir"
             return 1
         }
@@ -572,21 +577,21 @@ install_stow_from_source() {
     
     log "Running configure script..."
     ./configure --prefix=/usr/local || {
-        warn "Configure script failed"
+        warn "Configure script failed, manual dotfiles setup will be used"
         cd /tmp && rm -rf "$temp_dir"
         return 1
     }
     
     log "Compiling stow..."
     make || {
-        warn "Compilation failed"
+        warn "Compilation failed, manual dotfiles setup will be used"
         cd /tmp && rm -rf "$temp_dir"
         return 1
     }
     
     log "Installing stow..."
     sudo make install || {
-        warn "Installation failed"
+        warn "Installation failed, manual dotfiles setup will be used"
         cd /tmp && rm -rf "$temp_dir"
         return 1
     }
@@ -699,85 +704,126 @@ setup_dotfiles() {
     done
 }
 
-# Manual dotfiles setup when stow is not available
+# Manual dotfiles setup when stow is not available - replicates stow functionality
 setup_dotfiles_manually() {
     log "Setting up dotfiles manually (without stow)..."
+    log "This will create symbolic links to replicate GNU Stow functionality"
     
     # Debug: show current directory and dotfiles structure
     log "Current directory: $(pwd)"
     log "Available dotfiles directories:"
-    ls -la ./dotfiles/ 2>/dev/null || {
+    if ! ls -la ./dotfiles/ 2>/dev/null; then
         warn "dotfiles directory not found in current location"
         return 1
+    fi
+    
+    # Function to create symbolic links recursively (like stow does)
+    create_symlinks() {
+        local source_dir="$1"
+        local target_dir="$2"
+        local dotfile_name="$3"
+        
+        log "Processing $dotfile_name: $source_dir -> $target_dir"
+        
+        # Find all files in the source directory
+        if [ -d "$source_dir" ]; then
+            find "$source_dir" -type f | while read -r file; do
+                # Get the relative path from the source directory
+                local rel_path="${file#$source_dir/}"
+                local target_file="$target_dir/$rel_path"
+                local target_dirname="$(dirname "$target_file")"
+                
+                # Create target directory if it doesn't exist
+                if [ ! -d "$target_dirname" ]; then
+                    log "Creating directory: $target_dirname"
+                    mkdir -p "$target_dirname"
+                fi
+                
+                # Backup existing file if it exists and isn't already a symlink to our file
+                if [ -e "$target_file" ] && [ ! -L "$target_file" ]; then
+                    local backup_name="$target_file.backup.$(date +%s)"
+                    log "Backing up existing file: $target_file -> $backup_name"
+                    mv "$target_file" "$backup_name"
+                elif [ -L "$target_file" ]; then
+                    # Remove existing symlink
+                    log "Removing existing symlink: $target_file"
+                    rm "$target_file"
+                fi
+                
+                # Create symbolic link with absolute path
+                local abs_source="$(cd "$(dirname "$file")" && pwd)/$(basename "$file")"
+                log "Creating symlink: $target_file -> $abs_source"
+                ln -sf "$abs_source" "$target_file"
+            done
+        fi
     }
     
-    # Manually link common dotfiles
+    # Process each dotfile directory
     local dotfiles="zsh vim nvim starship tmux"
     local linked_any=false
     
     for dotfile in $dotfiles; do
         if [ -d "./dotfiles/$dotfile" ]; then
             log "Manually setting up $dotfile..."
-            
-            case $dotfile in
-                zsh)
-                    if [ -f "./dotfiles/zsh/.zshrc" ]; then
-                        log "Backing up existing .zshrc if it exists..."
-                        [ -f "$HOME/.zshrc" ] && mv "$HOME/.zshrc" "$HOME/.zshrc.backup.$(date +%s)"
-                        ln -sf "$(pwd)/dotfiles/zsh/.zshrc" "$HOME/.zshrc"
-                        log "Linked .zshrc"
-                        linked_any=true
-                    fi
-                    ;;
-                vim)
-                    if [ -f "./dotfiles/vim/.vimrc" ]; then
-                        log "Backing up existing .vimrc if it exists..."
-                        [ -f "$HOME/.vimrc" ] && mv "$HOME/.vimrc" "$HOME/.vimrc.backup.$(date +%s)"
-                        ln -sf "$(pwd)/dotfiles/vim/.vimrc" "$HOME/.vimrc"
-                        log "Linked .vimrc"
-                        linked_any=true
-                    fi
-                    ;;
-                nvim)
-                    if [ -d "./dotfiles/nvim/.config" ]; then
-                        log "Setting up neovim config..."
-                        mkdir -p "$HOME/.config"
-                        [ -d "$HOME/.config/nvim" ] && mv "$HOME/.config/nvim" "$HOME/.config/nvim.backup.$(date +%s)"
-                        ln -sf "$(pwd)/dotfiles/nvim/.config/nvim" "$HOME/.config/nvim"
-                        log "Linked neovim config"
-                        linked_any=true
-                    fi
-                    ;;
-                tmux)
-                    if [ -f "./dotfiles/tmux/.tmux.conf" ]; then
-                        log "Backing up existing .tmux.conf if it exists..."
-                        [ -f "$HOME/.tmux.conf" ] && mv "$HOME/.tmux.conf" "$HOME/.tmux.conf.backup.$(date +%s)"
-                        ln -sf "$(pwd)/dotfiles/tmux/.tmux.conf" "$HOME/.tmux.conf"
-                        log "Linked .tmux.conf"
-                        linked_any=true
-                    fi
-                    ;;
-                starship)
-                    if [ -d "./dotfiles/starship/.config" ]; then
-                        log "Setting up starship config..."
-                        mkdir -p "$HOME/.config"
-                        [ -d "$HOME/.config/starship" ] && mv "$HOME/.config/starship" "$HOME/.config/starship.backup.$(date +%s)"
-                        ln -sf "$(pwd)/dotfiles/starship/.config/starship" "$HOME/.config/starship"
-                        log "Linked starship config"
-                        linked_any=true
-                    fi
-                    ;;
-            esac
+            create_symlinks "$(pwd)/dotfiles/$dotfile" "$HOME" "$dotfile"
+            linked_any=true
         else
-            warn "Dotfile directory ./dotfiles/$dotfile not found, skipping..."
+            log "Checking for dotfiles in ./dotfiles/$dotfile..."
+            find ./dotfiles -type d -name "$dotfile" 2>/dev/null | head -1 | while read -r found_dir; do
+                if [ -n "$found_dir" ]; then
+                    log "Found $dotfile at: $found_dir"
+                    create_symlinks "$(pwd)/$found_dir" "$HOME" "$dotfile"
+                    linked_any=true
+                fi
+            done
+            
+            if [ ! -d "./dotfiles/$dotfile" ]; then
+                warn "Dotfile directory ./dotfiles/$dotfile not found, skipping..."
+            fi
         fi
     done
     
+    # Special handling for common config directories
+    log "Setting up common configuration directories..."
+    
+    # Handle .config directory structure
+    if [ -d "./dotfiles" ]; then
+        find ./dotfiles -name ".config" -type d | while read -r config_dir; do
+            log "Found .config directory: $config_dir"
+            if [ -d "$config_dir" ]; then
+                mkdir -p "$HOME/.config"
+                find "$config_dir" -mindepth 1 -maxdepth 1 -type d | while read -r subdir; do
+                    local dirname="$(basename "$subdir")"
+                    local target="$HOME/.config/$dirname"
+                    
+                    # Backup existing directory
+                    if [ -e "$target" ] && [ ! -L "$target" ]; then
+                        local backup_name="$target.backup.$(date +%s)"
+                        log "Backing up existing config: $target -> $backup_name"
+                        mv "$target" "$backup_name"
+                    elif [ -L "$target" ]; then
+                        log "Removing existing config symlink: $target"
+                        rm "$target"
+                    fi
+                    
+                    # Create symlink
+                    local abs_source="$(cd "$subdir" && pwd)"
+                    log "Linking config directory: $target -> $abs_source"
+                    ln -sf "$abs_source" "$target"
+                    linked_any=true
+                done
+            fi
+        done
+    fi
+    
     if [ "$linked_any" = true ]; then
-        log "Manual dotfiles setup completed successfully"
+        log "✅ Manual dotfiles setup completed successfully!"
+        log "Your dotfiles are now linked and ready to use"
         return 0
     else
-        warn "No dotfiles were linked - check that dotfiles exist in the expected locations"
+        warn "No dotfiles were found to link"
+        log "Available directories in ./dotfiles:"
+        ls -la ./dotfiles/ 2>/dev/null || log "dotfiles directory not accessible"
         return 1
     fi
 }
