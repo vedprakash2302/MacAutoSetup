@@ -199,7 +199,8 @@ install_cli_tools() {
             # Amazon Linux might have different package names
             if [ "$DISTRO" = "amzn" ]; then
                 # Only install tools that are actually available in Amazon Linux repos
-                COMMON_TOOLS="jq wget tmux python3 python3-pip nodejs npm"
+                # Note: neovim might be available in EPEL for Amazon Linux
+                COMMON_TOOLS="jq wget tmux python3 python3-pip nodejs npm vim-enhanced"
                 log "Note: Modern CLI tools (fzf, ripgrep, bat, eza, stow, neovim) will be installed via alternative methods"
             else
                 COMMON_TOOLS="fzf fd-find ripgrep bat eza jq wget tmux stow neovim python3 python3-pip nodejs npm"
@@ -499,10 +500,34 @@ install_amazon_linux_fallbacks() {
     
     # Install neovim 
     if ! command -v nvim &> /dev/null; then
-        log "Installing neovim AppImage..."
-        curl -Lo /tmp/nvim.appimage "https://github.com/neovim/neovim/releases/latest/download/nvim.appimage"
-        chmod +x /tmp/nvim.appimage
-        sudo mv /tmp/nvim.appimage /usr/local/bin/nvim || warn "Failed to install neovim, skipping..."
+        log "Installing neovim..."
+        # Try package manager first (more reliable than AppImage on some systems)
+        if sudo $PKG_INSTALL neovim; then
+            log "Successfully installed neovim from package repository"
+        else
+            log "Package manager installation failed, trying AppImage..."
+            curl -Lo /tmp/nvim.appimage "https://github.com/neovim/neovim/releases/latest/download/nvim.appimage"
+            chmod +x /tmp/nvim.appimage
+            
+            # Test if AppImage works before installing
+            if /tmp/nvim.appimage --version &> /dev/null; then
+                sudo mv /tmp/nvim.appimage /usr/local/bin/nvim
+                log "Successfully installed neovim AppImage"
+            else
+                warn "AppImage format not supported on this system, falling back to vim"
+                sudo $PKG_INSTALL vim-enhanced || sudo $PKG_INSTALL vim || {
+                    warn "Could not install vim either, skipping..."
+                }
+                rm -f /tmp/nvim.appimage
+                # Create nvim alias to vim if vim is available
+                if command -v vim &> /dev/null; then
+                    log "Creating nvim alias to vim"
+                    echo 'alias nvim=vim' >> ~/.bashrc 2>/dev/null || true
+                fi
+            fi
+        fi
+    else
+        log "neovim is already installed"
     fi
 }
 
@@ -765,24 +790,37 @@ setup_dotfiles() {
 fix_symlink_loops() {
     log "Checking for and fixing any existing symlink loops..."
     
-    # Check common config locations for loops
-    local check_paths=(
+    # Force remove potentially problematic symlinks and directories
+    local problematic_paths=(
         "$HOME/.config/starship"
         "$HOME/.zshrc"
-        "$HOME/.vimrc"
+        "$HOME/.vimrc" 
         "$HOME/.tmux.conf"
         "$HOME/.config/nvim"
     )
     
-    for path in "${check_paths[@]}"; do
-        if [ -L "$path" ]; then
-            # Check if the symlink is broken or creates a loop
-            if ! readlink -e "$path" >/dev/null 2>&1; then
-                log "Found broken symlink, removing: $path"
-                rm "$path"
+    for path in "${problematic_paths[@]}"; do
+        if [ -L "$path" ] || [ -e "$path" ]; then
+            # Check if it's a problematic symlink
+            if [ -L "$path" ]; then
+                local target=$(readlink "$path" 2>/dev/null || echo "")
+                if [ -z "$target" ] || ! readlink -e "$path" >/dev/null 2>&1; then
+                    log "Removing broken/circular symlink: $path"
+                    rm -rf "$path"
+                elif echo "$target" | grep -q "$path"; then
+                    log "Removing circular symlink: $path -> $target"
+                    rm -rf "$path"
+                fi
             fi
         fi
     done
+    
+    # Specifically handle starship config directory issues
+    if [ -d "$HOME/.config" ]; then
+        # Remove any starship directory that might be causing issues
+        find "$HOME/.config" -name "starship*" -type l -delete 2>/dev/null || true
+        find "$HOME/.config" -name "starship*" -type d -exec rm -rf {} + 2>/dev/null || true
+    fi
 }
 
 # Manual dotfiles setup when stow is not available - replicates stow functionality
@@ -837,6 +875,16 @@ setup_dotfiles_manually() {
             if [ "$file" -ef "$target_file" ]; then
                 log "Skipping $file - would create circular reference"
                 continue
+            fi
+            
+            # Additional check for starship config to prevent loops
+            if echo "$target_file" | grep -q "starship" && echo "$file" | grep -q "starship"; then
+                # Make sure we're not creating nested starship directories
+                local target_dir=$(dirname "$target_file")
+                if echo "$target_dir" | grep -q "/starship/.*starship"; then
+                    log "Skipping nested starship directory: $target_file"
+                    continue
+                fi
             fi
             
             # Create target directory if it doesn't exist
@@ -987,7 +1035,8 @@ install_minimal_cli_tools() {
             # Amazon Linux might have different package names  
             if [ "$DISTRO" = "amzn" ]; then
                 # Only install tools that are actually available in Amazon Linux repos
-                MINIMAL_TOOLS="jq wget tmux"
+                # Include vim-enhanced as a reliable editor
+                MINIMAL_TOOLS="jq wget tmux vim-enhanced"
                 log "Note: Modern CLI tools (fzf, ripgrep, bat, eza, stow, neovim) will be installed via alternative methods"
             else
                 MINIMAL_TOOLS="fzf fd-find ripgrep bat eza jq wget tmux stow neovim"
