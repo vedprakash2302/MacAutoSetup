@@ -145,7 +145,7 @@ install_build_essentials() {
             if [ "$DISTRO" = "amzn" ]; then
                 # Amazon Linux 2023 with dnf - install individual packages
                 log "Installing individual development packages for Amazon Linux..."
-                sudo $PKG_INSTALL gcc gcc-c++ make automake autoconf libtool curl wget ca-certificates gnupg2 || {
+                sudo $PKG_INSTALL gcc gcc-c++ make automake autoconf libtool curl wget ca-certificates gnupg2 util-linux shadow-utils || {
                     warn "Some build tools may not be available, continuing..."
                 }
             else
@@ -157,7 +157,7 @@ install_build_essentials() {
             if [ "$DISTRO" = "amzn" ]; then
                 # Amazon Linux 2 with yum
                 log "Installing individual development packages for Amazon Linux..."
-                sudo $PKG_INSTALL gcc gcc-c++ make automake autoconf libtool curl wget ca-certificates || {
+                sudo $PKG_INSTALL gcc gcc-c++ make automake autoconf libtool curl wget ca-certificates util-linux shadow-utils || {
                     warn "Some build tools may not be available, continuing..."
                 }
             else
@@ -462,6 +462,7 @@ install_amazon_linux_fallbacks() {
             }
             tar xf stow-2.3.1.tar.gz
             cd stow-2.3.1
+            chmod +x configure
             ./configure --prefix=/usr/local && make && sudo make install && {
                 log "Successfully installed stow from source"
             }
@@ -539,15 +540,36 @@ install_zap_zsh() {
 setup_dotfiles() {
     log "Setting up dotfiles with GNU Stow..."
     
+    # Check if we have stow installed
+    if ! command -v stow &> /dev/null; then
+        warn "GNU Stow is not installed, cannot set up dotfiles"
+        log "Install stow manually and run: stow --target=\$HOME --dir=./dotfiles zsh vim nvim starship tmux"
+        return 1
+    fi
+    
+    # Debug: show current directory and dotfiles structure
+    log "Current directory: $(pwd)"
+    log "Available dotfiles directories:"
+    ls -la ./dotfiles/ 2>/dev/null || {
+        warn "dotfiles directory not found in current location"
+        return 1
+    }
+    
     # Only stow Linux-compatible dotfiles
     local dotfiles="zsh vim nvim starship tmux"
     
     for dotfile in $dotfiles; do
         if [ -d "./dotfiles/$dotfile" ]; then
             log "Stowing $dotfile..."
-            stow --target="$HOME" --dir=./dotfiles "$dotfile"
+            log "Contents of ./dotfiles/$dotfile:"
+            find "./dotfiles/$dotfile" -type f -name ".*" -o -type f -name "*" 2>/dev/null || log "No files found"
+            stow --target="$HOME" --dir=./dotfiles "$dotfile" || {
+                warn "Failed to stow $dotfile"
+            }
         else
-            warn "Dotfile directory $dotfile not found, skipping..."
+            warn "Dotfile directory ./dotfiles/$dotfile not found, skipping..."
+            log "Checking if directory exists with different case or location..."
+            find ./dotfiles -type d -iname "$dotfile" 2>/dev/null || log "No matching directory found"
         fi
     done
 }
@@ -556,8 +578,22 @@ setup_dotfiles() {
 change_shell_to_zsh() {
     if [ "$SHELL" != "$(which zsh)" ]; then
         log "Changing default shell to zsh..."
-        chsh -s "$(which zsh)"
-        log "Shell changed to zsh. You may need to log out and log back in for this to take effect."
+        if command -v chsh &> /dev/null; then
+            chsh -s "$(which zsh)"
+            log "Shell changed to zsh. You may need to log out and log back in for this to take effect."
+        else
+            # Fallback for systems without chsh (like some Amazon Linux instances)
+            log "chsh not available, adding shell change instructions..."
+            cat << 'EOF' > ~/.change_shell_to_zsh.sh
+#!/bin/bash
+# Run this script to change your shell to zsh
+sudo usermod -s $(which zsh) $USER
+echo "Shell changed to zsh. Please log out and log back in for this to take effect."
+EOF
+            chmod +x ~/.change_shell_to_zsh.sh
+            log "Created ~/.change_shell_to_zsh.sh - run it to change your shell to zsh"
+            log "Or run: sudo usermod -s \$(which zsh) \$USER"
+        fi
     else
         log "Default shell is already zsh"
     fi
