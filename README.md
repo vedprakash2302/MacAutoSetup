@@ -34,15 +34,53 @@ cd ~/Projects/MacAutoSetup
 ./bootstrap.sh
 ```
 
-### 🐧 One-liner for remote Linux (curl only)
+### 🐧 Linux Server Setup
 
-Run this single command on a fresh remote Linux server. It will detect your distro, install required CLI tools, install Starship and Zap, clone this repo, and stow terminal dotfiles.
+#### 🏢 Company Server (Minimal Installation)
+
+For company servers where you want only essential terminal tools:
 
 ```sh
-INSTALL_LAZYDOCKER=0 MAC_AUTOSETUP_REPO_URL='https://github.com/vedprakash2302/MacAutoSetup.git' bash <(curl -fsSL https://raw.githubusercontent.com/vedprakash2302/MacAutoSetup/main/bootstrap-linux.sh)
+COMPANY=1 bash <(curl -fsSL https://raw.githubusercontent.com/vedprakash2302/MacAutoSetup/main/bootstrap-linux-nogit.sh)
 ```
 
-Notes:
+**Company Mode Installs:**
 
-- You may be prompted for your password for package installs (uses sudo).
-- Toggle optional pieces via env vars, e.g. `INSTALL_LAZYDOCKER=0` to skip lazydocker.
+- 🔧 Build essentials (gcc, make, etc.)
+- 🐚 Zsh shell + Zap plugin manager
+- 🔍 Essential CLI tools: `fzf`, `fd`, `ripgrep`, `bat`, `jq`, `wget`, `tmux`, `stow`, `neovim`
+- 🚀 Modern tools: `starship` prompt, `zoxide`, `btop`
+- 📁 Terminal dotfiles (zsh, vim, nvim, tmux, starship)
+- ✅ **Skips:** Python/Node installation, GitHub CLI, lazygit, lazydocker, delta
+
+#### 🌍 Personal Server (Full Installation)
+
+For personal servers where you want all development tools:
+
+```sh
+bash <(curl -fsSL https://raw.githubusercontent.com/vedprakash2302/MacAutoSetup/main/bootstrap-linux-nogit.sh)
+```
+
+**Full Mode Includes Everything Above Plus:**
+
+- 🐍 Python 3 + pip + pipx
+- 🟢 Node.js + npm + nvm
+- 🛠️ Development tools: `gh` (GitHub CLI), `delta`, `lazygit`, `lazydocker`
+
+---
+
+**Supported Distributions:**
+
+- Ubuntu/Debian (apt)
+- Fedora (dnf)
+- RHEL/CentOS (dnf/yum + EPEL)
+- Amazon Linux (yum/dnf + extras)
+- Arch Linux/Manjaro (pacman)
+
+**Common Features (Both Modes):**
+
+- 🔍 Auto-detects your Linux distribution and package manager
+- 🐚 Sets zsh as your default shell
+- 📁 Uses GNU Stow to manage dotfiles
+- 🔐 Prompts for password for package installations (uses sudo)
+- ⚡ Fast, reliable installation with error handling

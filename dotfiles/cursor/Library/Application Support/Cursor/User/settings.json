@@ -28,7 +28,7 @@
     "**/.turbo": true,
     "**/node_modules": true
   },
-  "workbench.iconTheme": "vscode-icons",
+  "workbench.iconTheme": "material-icon-theme",
   "workbench.activityBar.location": "hidden",
   "workbench.editor.editorActionsLocation": "hidden",
   "vsicons.dontShowNewVersionMessage": true,
@@ -74,5 +74,6 @@
   "explorer.compactFolders": false,
   "explorer.confirmDragAndDrop": false,
   "editor.fontLigatures": false,
-  "workbench.colorTheme": "SynthWave '84"
+  "workbench.colorTheme": "Gruvbox Dark Hard",
+  "symbols.hidesExplorerArrows": false
 }

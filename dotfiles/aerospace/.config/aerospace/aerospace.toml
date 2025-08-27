@@ -44,12 +44,12 @@ on-focus-changed = [
 #                 Monitor pattern is the same as for 'workspace-to-monitor-force-assignment'.
 #                 See: https://nikitabobko.github.io/AeroSpace/guide#assign-workspaces-to-monitors
 [gaps]
-inner.horizontal = 12
-inner.vertical = 12
-outer.left = 12
-outer.bottom = 12
-outer.top = 12
-outer.right = 12
+inner.horizontal = 24
+inner.vertical = 24
+outer.left = 24
+outer.bottom = 24
+outer.top = 24
+outer.right = 24
 
 # 'main' binding mode declaration
 # See: https://nikitabobko.github.io/AeroSpace/guide#binding-modes
@@ -113,11 +113,11 @@ alt-shift-semicolon = 'mode service'
 
 [workspace-to-monitor-force-assignment]
 
-1 = ['secondary', 'main']
-2 = ['secondary', 'main']
-3 = ['secondary', 'main']
-4 = 'main'
-5 = 'main'
+1 = ['main', 'secondary']
+2 = ['main', 'secondary']
+3 = ['main', 'secondary']
+4 = 'secondary'
+5 = 'secondary'
 
 
 # 'service' binding mode declaration.

@@ -55,6 +55,7 @@ cask "focus"
 cask "craft"
 cask "hiddenbar"
 cask "flux-app"
+cask "logi-options+"
 
 # cask "zoom" - I don't want to install this by default
 
