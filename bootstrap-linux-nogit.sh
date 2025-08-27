@@ -61,6 +61,13 @@ install_git() {
                     sudo yum install -y git
                 fi
                 ;;
+            amzn)
+                if command -v dnf &> /dev/null; then
+                    sudo dnf install -y git
+                else
+                    sudo yum install -y git
+                fi
+                ;;
             arch|manjaro)
                 sudo pacman -S --noconfirm git
                 ;;
@@ -104,6 +111,13 @@ install_curl() {
                 sudo dnf install -y curl
                 ;;
             rhel|centos)
+                if command -v dnf &> /dev/null; then
+                    sudo dnf install -y curl
+                else
+                    sudo yum install -y curl
+                fi
+                ;;
+            amzn)
                 if command -v dnf &> /dev/null; then
                     sudo dnf install -y curl
                 else

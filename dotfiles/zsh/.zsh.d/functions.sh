@@ -3,7 +3,27 @@
 ##############################
 
 vault_login() {
-  export VAULT_ADDR=https://civ1.st.adskengineer.net
+  vault_server="https://civ1.dv.adskengineer.net:8200/"
+  echo This command will guide you to create AWS key and secret
+  echo Please Select Vault Server to login:
+  select vault_option in dev stage prod;
+  do
+      case $vault_option in
+          "dev")
+              vault_server="https://civ1.dv.adskengineer.net"
+              break
+              ;;
+          "stage")
+              vault_server="https://civ1.st.adskengineer.net"
+              break
+              ;;
+          "prod")
+              vault_server="https://civ1.pr.adskengineer.net"
+              break
+              ;;
+      esac
+  done
+  export VAULT_ADDR=$vault_server
   vault login -method=oidc
 }
 
