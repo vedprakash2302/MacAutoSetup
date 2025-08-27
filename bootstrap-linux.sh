@@ -666,9 +666,45 @@ install_zap_zsh() {
     fi
 }
 
+# Find and change to the repository directory
+find_repo_directory() {
+    # Check if we're already in the repo directory
+    if [ -d "./dotfiles" ]; then
+        log "Already in repository directory: $(pwd)"
+        return 0
+    fi
+    
+    # Common locations where the repo might be
+    local possible_dirs=(
+        "$HOME/projects/MacAutoSetup"
+        "$HOME/MacAutoSetup"  
+        "/tmp/MacAutoSetup"
+        "$(find /tmp -name "MacAutoSetup" -type d 2>/dev/null | head -1)"
+        "$(find $HOME -name "MacAutoSetup" -type d 2>/dev/null | head -1)"
+    )
+    
+    for dir in "${possible_dirs[@]}"; do
+        if [ -n "$dir" ] && [ -d "$dir/dotfiles" ]; then
+            log "Found repository at: $dir"
+            cd "$dir" || continue
+            log "Changed to repository directory: $(pwd)"
+            return 0
+        fi
+    done
+    
+    error "Could not find repository directory with dotfiles"
+    return 1
+}
+
 # Use GNU Stow to symlink dotfiles (Linux-appropriate ones only)
 setup_dotfiles() {
     log "Setting up dotfiles with GNU Stow..."
+    
+    # Ensure we're in the correct directory
+    if ! find_repo_directory; then
+        error "Cannot proceed with dotfiles setup - repository not found"
+        return 1
+    fi
     
     # Check if we have stow installed, if not try manual setup
     if ! command -v stow &> /dev/null; then
@@ -709,11 +745,19 @@ setup_dotfiles_manually() {
     log "Setting up dotfiles manually (without stow)..."
     log "This will create symbolic links to replicate GNU Stow functionality"
     
+    # Ensure we're in the correct directory
+    if ! find_repo_directory; then
+        error "Cannot proceed with manual dotfiles setup - repository not found"
+        return 1
+    fi
+    
     # Debug: show current directory and dotfiles structure
     log "Current directory: $(pwd)"
     log "Available dotfiles directories:"
     if ! ls -la ./dotfiles/ 2>/dev/null; then
-        warn "dotfiles directory not found in current location"
+        error "dotfiles directory not found even after finding repository"
+        log "Directory contents:"
+        ls -la . 2>/dev/null || log "Cannot list directory contents"
         return 1
     fi
     
@@ -941,8 +985,19 @@ main() {
     # Install Zap ZSH plugin manager (both modes)
     install_zap_zsh
     
+    # Ensure we're in the right directory before setting up dotfiles
+    log "Preparing for dotfiles setup..."
+    local original_dir="$(pwd)"
+    
     # Setup dotfiles (both modes)
-    setup_dotfiles
+    setup_dotfiles || {
+        warn "Dotfiles setup failed, but continuing with remaining setup..."
+    }
+    
+    # Return to original directory if needed
+    if [ "$(pwd)" != "$original_dir" ]; then
+        cd "$original_dir" 2>/dev/null || log "Could not return to original directory"
+    fi
     
     # Change shell to zsh (both modes)
     change_shell_to_zsh
