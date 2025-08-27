@@ -447,27 +447,29 @@ install_amazon_linux_fallbacks() {
         rm -f fd fd.tar.gz || warn "Failed to install fd, skipping..."
     fi
     
-    # Install stow (try EPEL first, then from source)
+    # Install stow (try multiple methods)
     if ! command -v stow &> /dev/null; then
         log "Installing stow..."
-        sudo $PKG_INSTALL stow || {
-            log "stow not in repositories, installing from source..."
-            # Install perl which is required for stow
-            sudo $PKG_INSTALL perl || warn "Could not install perl, stow installation may fail"
+        
+        # Method 1: Try package manager first
+        sudo $PKG_INSTALL stow && {
+            log "Successfully installed stow from package repository"
+        } || {
+            log "stow not in repositories, trying alternative installation methods..."
             
-            cd /tmp
-            wget https://ftp.gnu.org/gnu/stow/stow-2.3.1.tar.gz || {
-                warn "Failed to download stow source, skipping..."
-                return
-            }
-            tar xf stow-2.3.1.tar.gz
-            cd stow-2.3.1
-            chmod +x configure
-            ./configure --prefix=/usr/local && make && sudo make install && {
-                log "Successfully installed stow from source"
-            }
-            cd /tmp && rm -rf stow-2.3.1*
-        } || warn "Failed to install stow, skipping..."
+            # Method 2: Try installing from EPEL if available
+            if [ "$DISTRO" = "amzn" ]; then
+                log "Trying to install stow from EPEL..."
+                sudo $PKG_INSTALL stow --enablerepo=epel || {
+                    log "EPEL installation failed, trying from source..."
+                    install_stow_from_source
+                }
+            else
+                install_stow_from_source
+            fi
+        }
+    else
+        log "stow is already installed"
     fi
     
     # Install neovim 
@@ -476,6 +478,87 @@ install_amazon_linux_fallbacks() {
         curl -Lo /tmp/nvim.appimage "https://github.com/neovim/neovim/releases/latest/download/nvim.appimage"
         chmod +x /tmp/nvim.appimage
         sudo mv /tmp/nvim.appimage /usr/local/bin/nvim || warn "Failed to install neovim, skipping..."
+    fi
+}
+
+# Install stow from source
+install_stow_from_source() {
+    log "Installing stow from source..."
+    
+    # Install perl which is required for stow
+    sudo $PKG_INSTALL perl || {
+        warn "Could not install perl, stow installation may fail"
+    }
+    
+    # Create temporary directory for compilation
+    local temp_dir="/tmp/stow-build-$$"
+    mkdir -p "$temp_dir" || {
+        warn "Could not create temporary directory, skipping stow installation"
+        return 1
+    }
+    
+    cd "$temp_dir" || {
+        warn "Could not enter temporary directory, skipping stow installation"
+        return 1
+    }
+    
+    # Download and extract stow
+    wget https://ftp.gnu.org/gnu/stow/stow-2.3.1.tar.gz || {
+        warn "Failed to download stow source"
+        cd /tmp && rm -rf "$temp_dir"
+        return 1
+    }
+    
+    tar xf stow-2.3.1.tar.gz || {
+        warn "Failed to extract stow source"
+        cd /tmp && rm -rf "$temp_dir"
+        return 1
+    }
+    
+    cd stow-2.3.1 || {
+        warn "Failed to enter stow source directory"
+        cd /tmp && rm -rf "$temp_dir"
+        return 1
+    }
+    
+    # Make configure executable and run it
+    chmod 755 configure || {
+        warn "Could not make configure script executable"
+        cd /tmp && rm -rf "$temp_dir"
+        return 1
+    }
+    
+    log "Running configure script..."
+    ./configure --prefix=/usr/local || {
+        warn "Configure script failed"
+        cd /tmp && rm -rf "$temp_dir"
+        return 1
+    }
+    
+    log "Compiling stow..."
+    make || {
+        warn "Compilation failed"
+        cd /tmp && rm -rf "$temp_dir"
+        return 1
+    }
+    
+    log "Installing stow..."
+    sudo make install || {
+        warn "Installation failed"
+        cd /tmp && rm -rf "$temp_dir"
+        return 1
+    }
+    
+    # Clean up
+    cd /tmp && rm -rf "$temp_dir"
+    
+    # Verify installation
+    if command -v stow &> /dev/null; then
+        log "Successfully installed stow from source"
+        return 0
+    else
+        warn "stow installation completed but command not found in PATH"
+        return 1
     fi
 }
 
@@ -540,11 +623,11 @@ install_zap_zsh() {
 setup_dotfiles() {
     log "Setting up dotfiles with GNU Stow..."
     
-    # Check if we have stow installed
+    # Check if we have stow installed, if not try manual setup
     if ! command -v stow &> /dev/null; then
-        warn "GNU Stow is not installed, cannot set up dotfiles"
-        log "Install stow manually and run: stow --target=\$HOME --dir=./dotfiles zsh vim nvim starship tmux"
-        return 1
+        warn "GNU Stow is not installed, attempting manual dotfiles setup..."
+        setup_dotfiles_manually
+        return $?
     fi
     
     # Debug: show current directory and dotfiles structure
@@ -572,6 +655,89 @@ setup_dotfiles() {
             find ./dotfiles -type d -iname "$dotfile" 2>/dev/null || log "No matching directory found"
         fi
     done
+}
+
+# Manual dotfiles setup when stow is not available
+setup_dotfiles_manually() {
+    log "Setting up dotfiles manually (without stow)..."
+    
+    # Debug: show current directory and dotfiles structure
+    log "Current directory: $(pwd)"
+    log "Available dotfiles directories:"
+    ls -la ./dotfiles/ 2>/dev/null || {
+        warn "dotfiles directory not found in current location"
+        return 1
+    }
+    
+    # Manually link common dotfiles
+    local dotfiles="zsh vim nvim starship tmux"
+    local linked_any=false
+    
+    for dotfile in $dotfiles; do
+        if [ -d "./dotfiles/$dotfile" ]; then
+            log "Manually setting up $dotfile..."
+            
+            case $dotfile in
+                zsh)
+                    if [ -f "./dotfiles/zsh/.zshrc" ]; then
+                        log "Backing up existing .zshrc if it exists..."
+                        [ -f "$HOME/.zshrc" ] && mv "$HOME/.zshrc" "$HOME/.zshrc.backup.$(date +%s)"
+                        ln -sf "$(pwd)/dotfiles/zsh/.zshrc" "$HOME/.zshrc"
+                        log "Linked .zshrc"
+                        linked_any=true
+                    fi
+                    ;;
+                vim)
+                    if [ -f "./dotfiles/vim/.vimrc" ]; then
+                        log "Backing up existing .vimrc if it exists..."
+                        [ -f "$HOME/.vimrc" ] && mv "$HOME/.vimrc" "$HOME/.vimrc.backup.$(date +%s)"
+                        ln -sf "$(pwd)/dotfiles/vim/.vimrc" "$HOME/.vimrc"
+                        log "Linked .vimrc"
+                        linked_any=true
+                    fi
+                    ;;
+                nvim)
+                    if [ -d "./dotfiles/nvim/.config" ]; then
+                        log "Setting up neovim config..."
+                        mkdir -p "$HOME/.config"
+                        [ -d "$HOME/.config/nvim" ] && mv "$HOME/.config/nvim" "$HOME/.config/nvim.backup.$(date +%s)"
+                        ln -sf "$(pwd)/dotfiles/nvim/.config/nvim" "$HOME/.config/nvim"
+                        log "Linked neovim config"
+                        linked_any=true
+                    fi
+                    ;;
+                tmux)
+                    if [ -f "./dotfiles/tmux/.tmux.conf" ]; then
+                        log "Backing up existing .tmux.conf if it exists..."
+                        [ -f "$HOME/.tmux.conf" ] && mv "$HOME/.tmux.conf" "$HOME/.tmux.conf.backup.$(date +%s)"
+                        ln -sf "$(pwd)/dotfiles/tmux/.tmux.conf" "$HOME/.tmux.conf"
+                        log "Linked .tmux.conf"
+                        linked_any=true
+                    fi
+                    ;;
+                starship)
+                    if [ -d "./dotfiles/starship/.config" ]; then
+                        log "Setting up starship config..."
+                        mkdir -p "$HOME/.config"
+                        [ -d "$HOME/.config/starship" ] && mv "$HOME/.config/starship" "$HOME/.config/starship.backup.$(date +%s)"
+                        ln -sf "$(pwd)/dotfiles/starship/.config/starship" "$HOME/.config/starship"
+                        log "Linked starship config"
+                        linked_any=true
+                    fi
+                    ;;
+            esac
+        else
+            warn "Dotfile directory ./dotfiles/$dotfile not found, skipping..."
+        fi
+    done
+    
+    if [ "$linked_any" = true ]; then
+        log "Manual dotfiles setup completed successfully"
+        return 0
+    else
+        warn "No dotfiles were linked - check that dotfiles exist in the expected locations"
+        return 1
+    fi
 }
 
 # Change default shell to zsh
