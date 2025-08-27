@@ -521,12 +521,54 @@ install_stow_from_source() {
         return 1
     }
     
-    # Make configure executable and run it
-    chmod 755 configure || {
-        warn "Could not make configure script executable"
+    # Debug: check file permissions before and after chmod
+    log "Checking configure script permissions..."
+    ls -la configure
+    
+    # Try multiple methods to make configure executable
+    log "Making configure script executable..."
+    chmod 755 configure 2>/dev/null || chmod +x configure 2>/dev/null || {
+        warn "Standard chmod failed, trying alternative methods..."
+        # Try using sh to run configure instead
+        log "Running configure with sh interpreter..."
+        sh configure --prefix=/usr/local || {
+            warn "Configure script failed with sh interpreter"
+            # Try perl directly since stow is a perl program
+            log "Attempting to install stow manually without configure..."
+            if command -v perl &> /dev/null; then
+                log "Perl is available, creating basic stow installation..."
+                # Copy stow script directly
+                if [ -f "bin/stow" ]; then
+                    sudo cp bin/stow /usr/local/bin/stow
+                    sudo chmod +x /usr/local/bin/stow
+                    log "Manually installed stow script"
+                    cd /tmp && rm -rf "$temp_dir"
+                    return 0
+                fi
+            fi
+            cd /tmp && rm -rf "$temp_dir"
+            return 1
+        }
+        log "Configure completed with sh interpreter"
+        make || {
+            warn "Compilation failed"
+            cd /tmp && rm -rf "$temp_dir"
+            return 1
+        }
+        log "Compilation completed"
+        sudo make install || {
+            warn "Installation failed"
+            cd /tmp && rm -rf "$temp_dir"
+            return 1
+        }
+        log "Installation completed"
         cd /tmp && rm -rf "$temp_dir"
-        return 1
+        return 0
     }
+    
+    # Check if chmod worked
+    log "Verifying configure script is executable..."
+    ls -la configure
     
     log "Running configure script..."
     ./configure --prefix=/usr/local || {
