@@ -412,9 +412,20 @@ install_amazon_linux_fallbacks() {
     # Install fzf
     if ! command -v fzf &> /dev/null; then
         log "Installing fzf from GitHub..."
-        git clone --depth 1 https://github.com/junegunn/fzf.git ~/.fzf && ~/.fzf/install --all --no-update-rc || {
+        if [ -d ~/.fzf ]; then
+            log "Removing existing fzf directory..."
+            rm -rf ~/.fzf
+        fi
+        git clone --depth 1 https://github.com/junegunn/fzf.git ~/.fzf && {
+            ~/.fzf/install --all --no-update-rc
+            # Add to PATH for immediate use
+            export PATH="$HOME/.fzf/bin:$PATH"
+            log "fzf installed and added to PATH"
+        } || {
             warn "Failed to install fzf, skipping..."
         }
+    else
+        log "fzf is already installed"
     fi
     
     # Install ripgrep  
@@ -750,10 +761,37 @@ setup_dotfiles() {
     done
 }
 
+# Fix any existing symlink loops
+fix_symlink_loops() {
+    log "Checking for and fixing any existing symlink loops..."
+    
+    # Check common config locations for loops
+    local check_paths=(
+        "$HOME/.config/starship"
+        "$HOME/.zshrc"
+        "$HOME/.vimrc"
+        "$HOME/.tmux.conf"
+        "$HOME/.config/nvim"
+    )
+    
+    for path in "${check_paths[@]}"; do
+        if [ -L "$path" ]; then
+            # Check if the symlink is broken or creates a loop
+            if ! readlink -e "$path" >/dev/null 2>&1; then
+                log "Found broken symlink, removing: $path"
+                rm "$path"
+            fi
+        fi
+    done
+}
+
 # Manual dotfiles setup when stow is not available - replicates stow functionality
 setup_dotfiles_manually() {
     log "Setting up dotfiles manually (without stow)..."
     log "This will create symbolic links to replicate GNU Stow functionality"
+    
+    # Fix any existing symlink loops first
+    fix_symlink_loops
     
     # Ensure we're in the correct directory
     if ! find_repo_directory; then
@@ -779,37 +817,60 @@ setup_dotfiles_manually() {
         
         log "Processing $dotfile_name: $source_dir -> $target_dir"
         
+        # Ensure source directory exists and is absolute
+        if [ ! -d "$source_dir" ]; then
+            warn "Source directory does not exist: $source_dir"
+            return 1
+        fi
+        
+        # Convert to absolute path
+        source_dir="$(cd "$source_dir" && pwd)"
+        
         # Find all files in the source directory
-        if [ -d "$source_dir" ]; then
-            find "$source_dir" -type f | while read -r file; do
-                # Get the relative path from the source directory
-                local rel_path="${file#$source_dir/}"
-                local target_file="$target_dir/$rel_path"
-                local target_dirname="$(dirname "$target_file")"
-                
-                # Create target directory if it doesn't exist
-                if [ ! -d "$target_dirname" ]; then
-                    log "Creating directory: $target_dirname"
-                    mkdir -p "$target_dirname"
+        find "$source_dir" -type f | while read -r file; do
+            # Get the relative path from the source directory
+            local rel_path="${file#$source_dir/}"
+            local target_file="$target_dir/$rel_path"
+            local target_dirname="$(dirname "$target_file")"
+            
+            # Skip if this would create a circular reference
+            if [ "$file" -ef "$target_file" ]; then
+                log "Skipping $file - would create circular reference"
+                continue
+            fi
+            
+            # Create target directory if it doesn't exist
+            if [ ! -d "$target_dirname" ]; then
+                log "Creating directory: $target_dirname"
+                mkdir -p "$target_dirname"
+            fi
+            
+            # Check if target already exists
+            if [ -e "$target_file" ] || [ -L "$target_file" ]; then
+                # If it's already a symlink to the correct file, skip it
+                if [ -L "$target_file" ] && [ "$(readlink "$target_file")" = "$file" ]; then
+                    log "Symlink already exists and is correct: $target_file"
+                    continue
                 fi
                 
-                # Backup existing file if it exists and isn't already a symlink to our file
-                if [ -e "$target_file" ] && [ ! -L "$target_file" ]; then
+                # Backup existing file if it's not a symlink
+                if [ ! -L "$target_file" ]; then
                     local backup_name="$target_file.backup.$(date +%s)"
                     log "Backing up existing file: $target_file -> $backup_name"
                     mv "$target_file" "$backup_name"
-                elif [ -L "$target_file" ]; then
+                else
                     # Remove existing symlink
                     log "Removing existing symlink: $target_file"
                     rm "$target_file"
                 fi
-                
-                # Create symbolic link with absolute path
-                local abs_source="$(cd "$(dirname "$file")" && pwd)/$(basename "$file")"
-                log "Creating symlink: $target_file -> $abs_source"
-                ln -sf "$abs_source" "$target_file"
-            done
-        fi
+            fi
+            
+            # Create symbolic link with absolute path
+            log "Creating symlink: $target_file -> $file"
+            ln -sf "$file" "$target_file" || {
+                warn "Failed to create symlink: $target_file -> $file"
+            }
+        done
     }
     
     # Process each dotfile directory
