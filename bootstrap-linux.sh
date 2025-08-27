@@ -193,20 +193,20 @@ install_cli_tools() {
     COMMON_TOOLS=""
     case $PKG_MANAGER in
         apt)
-            COMMON_TOOLS="fzf fd-find ripgrep bat jq wget tmux stow neovim python3 python3-pip nodejs npm"
+            COMMON_TOOLS="fzf fd-find ripgrep bat eza jq wget tmux stow neovim python3 python3-pip nodejs npm"
             ;;
         dnf|yum)
             # Amazon Linux might have different package names
             if [ "$DISTRO" = "amzn" ]; then
                 # Only install tools that are actually available in Amazon Linux repos
                 COMMON_TOOLS="jq wget tmux python3 python3-pip nodejs npm"
-                log "Note: Modern CLI tools (fzf, ripgrep, bat, stow, neovim) will be installed via alternative methods"
+                log "Note: Modern CLI tools (fzf, ripgrep, bat, eza, stow, neovim) will be installed via alternative methods"
             else
-                COMMON_TOOLS="fzf fd-find ripgrep bat jq wget tmux stow neovim python3 python3-pip nodejs npm"
+                COMMON_TOOLS="fzf fd-find ripgrep bat eza jq wget tmux stow neovim python3 python3-pip nodejs npm"
             fi
             ;;
         pacman)
-            COMMON_TOOLS="fzf fd ripgrep bat jq wget tmux stow neovim python python-pip nodejs npm"
+            COMMON_TOOLS="fzf fd ripgrep bat eza jq wget tmux stow neovim python python-pip nodejs npm"
             ;;
     esac
     
@@ -474,6 +474,16 @@ install_amazon_linux_fallbacks() {
         }
     else
         log "stow is already installed"
+    fi
+    
+    # Install eza (modern ls replacement)
+    if ! command -v eza &> /dev/null; then
+        log "Installing eza (modern ls replacement)..."
+        EZA_VERSION=$(curl -s "https://api.github.com/repos/eza-community/eza/releases/latest" | grep -Po '"tag_name": "v\K[^"]*')
+        curl -Lo eza.tar.gz "https://github.com/eza-community/eza/releases/latest/download/eza_x86_64-unknown-linux-musl.tar.gz"
+        tar xf eza.tar.gz ./eza
+        sudo install eza /usr/local/bin/
+        rm -f eza eza.tar.gz || warn "Failed to install eza, skipping..."
     fi
     
     # Install neovim 
@@ -910,20 +920,20 @@ install_minimal_cli_tools() {
     MINIMAL_TOOLS=""
     case $PKG_MANAGER in
         apt)
-            MINIMAL_TOOLS="fzf fd-find ripgrep bat jq wget tmux stow neovim"
+            MINIMAL_TOOLS="fzf fd-find ripgrep bat eza jq wget tmux stow neovim"
             ;;
         dnf|yum)
             # Amazon Linux might have different package names  
             if [ "$DISTRO" = "amzn" ]; then
                 # Only install tools that are actually available in Amazon Linux repos
                 MINIMAL_TOOLS="jq wget tmux"
-                log "Note: Modern CLI tools (fzf, ripgrep, bat, stow, neovim) will be installed via alternative methods"
+                log "Note: Modern CLI tools (fzf, ripgrep, bat, eza, stow, neovim) will be installed via alternative methods"
             else
-                MINIMAL_TOOLS="fzf fd-find ripgrep bat jq wget tmux stow neovim"
+                MINIMAL_TOOLS="fzf fd-find ripgrep bat eza jq wget tmux stow neovim"
             fi
             ;;
         pacman)
-            MINIMAL_TOOLS="fzf fd ripgrep bat jq wget tmux stow neovim"
+            MINIMAL_TOOLS="fzf fd ripgrep bat eza jq wget tmux stow neovim"
             ;;
     esac
     
