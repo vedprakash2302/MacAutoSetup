@@ -25,6 +25,7 @@ background-blur-radius = 30
 
 # Keybindings
 keybind = global:cmd+option+grave_accent=toggle_quick_terminal
+keybind = cmd+comma=text:nvim $HOME/.config/ghostty/config\n
 
 # behavior
 auto-update = check

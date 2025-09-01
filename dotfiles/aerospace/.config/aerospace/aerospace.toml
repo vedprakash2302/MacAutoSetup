@@ -44,12 +44,16 @@ on-focus-changed = [
 #                 Monitor pattern is the same as for 'workspace-to-monitor-force-assignment'.
 #                 See: https://nikitabobko.github.io/AeroSpace/guide#assign-workspaces-to-monitors
 [gaps]
-inner.horizontal = 24
-inner.vertical = 24
-outer.left = 24
-outer.bottom = 24
-outer.top = 24
-outer.right = 24
+inner.horizontal = [
+  { monitor."built-in" = 16 },
+  { monitor."secondary" = 32 },
+  16,
+]
+inner.vertical = [{ monitor."built-in" = 16 }, { monitor."secondary" = 32 }, 16]
+outer.left = [{ monitor."built-in" = 16 }, { monitor."secondary" = 32 }, 16]
+outer.bottom = [{ monitor."built-in" = 16 }, { monitor."secondary" = 32 }, 16]
+outer.top = [{ monitor."built-in" = 16 }, { monitor."secondary" = 32 }, 16]
+outer.right = [{ monitor."built-in" = 16 }, { monitor."secondary" = 32 }, 16]
 
 # 'main' binding mode declaration
 # See: https://nikitabobko.github.io/AeroSpace/guide#binding-modes
@@ -113,11 +117,11 @@ alt-shift-semicolon = 'mode service'
 
 [workspace-to-monitor-force-assignment]
 
-1 = ['main', 'secondary']
-2 = ['main', 'secondary']
-3 = ['main', 'secondary']
-4 = 'secondary'
-5 = 'secondary'
+1 = ['secondary', 'main']
+2 = ['secondary', 'main']
+3 = ['secondary', 'main']
+4 = ['secondary', 'main']
+5 = ['main', 'secondary']
 
 
 # 'service' binding mode declaration.
@@ -134,11 +138,11 @@ backspace = ['close-all-windows-but-current', 'mode main']
 
 [[on-window-detected]]
 if.app-name-regex-substring = 'Outlook'
-run = ['layout floating', 'move-node-to-workspace 1']
+run = ['layout floating', 'move-node-to-workspace 4']
 
 [[on-window-detected]]
 if.app-name-regex-substring = 'Zoom'
-run = ['layout floating', 'move-node-to-workspace 1']
+run = ['layout floating', 'move-node-to-workspace 4']
 
 [[on-window-detected]]
 if.app-name-regex-substring = 'Finder'
@@ -155,20 +159,27 @@ run = ['layout tiling', 'move-node-to-workspace 2']
 
 [[on-window-detected]]
 if.app-name-regex-substring = 'Slack'
-run = ['layout tiling', 'move-node-to-workspace 1']
+run = ['layout tiling', 'move-node-to-workspace 4']
 
 [[on-window-detected]]
 if.app-name-regex-substring = 'Linear'
-run = ['layout tiling', 'move-node-to-workspace 1']
+run = ['layout tiling', 'move-node-to-workspace 4']
 
 [[on-window-detected]]
 if.app-name-regex-substring = 'Cursor'
-run = ['layout tiling', 'move-node-to-workspace 3']
+run = ['layout tiling', 'move-node-to-workspace 1']
 
 [[on-window-detected]]
 if.app-name-regex-substring = 'Warp'
 run = ['layout tiling', 'move-node-to-workspace 3']
 
+[[on-window-detected]]
+if.app-name-regex-substring = 'Mail'
+run = ['layout tiling', 'move-node-to-workspace 4']
+
+[[on-window-detected]]
+if.app-name-regex-substring = 'Calendar'
+run = ['layout tiling', 'move-node-to-workspace 4']
 
 # Floating
 [[on-window-detected]]
