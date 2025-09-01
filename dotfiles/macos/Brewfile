@@ -27,6 +27,7 @@ brew "starship"
 brew "zoxide"
 brew "borders"
 brew "bitwarden-cli"
+brew "mas"
 
 # Languages n stuff
 brew "python"

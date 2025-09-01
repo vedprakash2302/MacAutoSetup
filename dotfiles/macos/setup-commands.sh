@@ -81,6 +81,7 @@ defaults write com.apple.dock tilesize -int 48
 # Spring loading
 defaults write com.apple.dock "enable-spring-load-actions-on-all-items" -bool "true"
 
+defaults write com.apple.dock "expose-group-apps" -bool "true"
 
 
 #################### Desktop related settings ####################
@@ -91,8 +92,21 @@ defaults write com.apple.finder "ShowRemovableMediaOnDesktop" -bool "false"
 
 
 #################### Other settings ####################
-defaults write com.apple.dock "expose-group-apps" -bool "true"
+defaults write com.apple.TextEdit "RichText" -bool false
+# Disable automatic capitalization as it’s annoying when typing code
+defaults write NSGlobalDomain NSAutomaticCapitalizationEnabled -bool false
 
+# Disable smart dashes as they’re annoying when typing code
+defaults write NSGlobalDomain NSAutomaticDashSubstitutionEnabled -bool false
+
+# Disable automatic period substitution as it’s annoying when typing code
+defaults write NSGlobalDomain NSAutomaticPeriodSubstitutionEnabled -bool false
+
+# Disable smart quotes as they’re annoying when typing code
+defaults write NSGlobalDomain NSAutomaticQuoteSubstitutionEnabled -bool false
+
+# Disable auto-correct
+defaults write NSGlobalDomain NSAutomaticSpellingCorrectionEnabled -bool false
 
 
 

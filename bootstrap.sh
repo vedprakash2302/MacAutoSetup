@@ -20,11 +20,20 @@ if ! command -v brew &>/dev/null; then
 fi
 
 # Install applications via Brewfile
-if [[ -f ./Brewfile ]]; then
+if [[ -f ./dotfiles/macos/Brewfile ]]; then
 	echo "Installing applications from Brewfile..."
-	brew bundle --file=./Brewfile
+	brew bundle --file=./dotfiles/macos/Brewfile
 else
-	echo "Warning: Brewfile not found in current directory"
+	echo "Warning: Brewfile not found!"
+fi
+
+# Install from mac app store
+if [[ -f ./dotfiles/macos/mas.sh ]]; then
+	echo "Installing applications from mas.sh..."
+  chmod +x ./dotfiles/macos/mas.sh
+	./dotfiles/macos/mas.sh
+else
+	echo "Warning: mas.sh not found!"
 fi
 
 # Install Zap ZSH plugin manager
