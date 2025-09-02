@@ -47,13 +47,39 @@ on-focus-changed = [
 inner.horizontal = [
   { monitor."built-in" = 16 },
   { monitor."secondary" = 32 },
+  { monitor."LEN*" = 32 },
   16,
 ]
-inner.vertical = [{ monitor."built-in" = 16 }, { monitor."secondary" = 32 }, 16]
-outer.left = [{ monitor."built-in" = 16 }, { monitor."secondary" = 32 }, 16]
-outer.bottom = [{ monitor."built-in" = 16 }, { monitor."secondary" = 32 }, 16]
-outer.top = [{ monitor."built-in" = 16 }, { monitor."secondary" = 32 }, 16]
-outer.right = [{ monitor."built-in" = 16 }, { monitor."secondary" = 32 }, 16]
+inner.vertical = [
+  { monitor."built-in" = 16 },
+  { monitor."secondary" = 32 },
+  { monitor."LEN*" = 32 },
+  16,
+]
+outer.left = [
+  { monitor."built-in" = 16 },
+  { monitor."secondary" = 32 },
+  { monitor."LEN*" = 32 },
+  16,
+]
+outer.bottom = [
+  { monitor."built-in" = 16 },
+  { monitor."secondary" = 32 },
+  { monitor."LEN*" = 32 },
+  16,
+]
+outer.top = [
+  { monitor."built-in" = 16 },
+  { monitor."secondary" = 32 },
+  { monitor."LEN*" = 32 },
+  16,
+]
+outer.right = [
+  { monitor."built-in" = 16 },
+  { monitor."secondary" = 32 },
+  { monitor."LEN*" = 32 },
+  16,
+]
 
 # 'main' binding mode declaration
 # See: https://nikitabobko.github.io/AeroSpace/guide#binding-modes
