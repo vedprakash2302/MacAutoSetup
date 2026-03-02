@@ -49,8 +49,6 @@ defaults write com.apple.finder _FXSortFoldersFirst -bool true
 defaults write com.apple.finder FXDefaultSearchScope -string "SCcf"
 defaults write com.apple.desktopservices DSDontWriteNetworkStores true
 
-
-
 #################### Dock related settings ####################
 defaults write com.apple.dock autohide -bool true
 defaults write com.apple.dock "show-recents" -bool false
@@ -83,13 +81,10 @@ defaults write com.apple.dock "enable-spring-load-actions-on-all-items" -bool "t
 
 defaults write com.apple.dock "expose-group-apps" -bool "true"
 
-
 #################### Desktop related settings ####################
-defaults write com.apple.finder "_FXSortFoldersFirstOnDesktop" -bool "true" 
-defaults write com.apple.finder "ShowExternalHardDrivesOnDesktop" -bool "false" 
-defaults write com.apple.finder "ShowRemovableMediaOnDesktop" -bool "false" 
-
-
+defaults write com.apple.finder "_FXSortFoldersFirstOnDesktop" -bool "true"
+defaults write com.apple.finder "ShowExternalHardDrivesOnDesktop" -bool "false"
+defaults write com.apple.finder "ShowRemovableMediaOnDesktop" -bool "false"
 
 #################### Other settings ####################
 defaults write com.apple.TextEdit "RichText" -bool false
@@ -108,13 +103,14 @@ defaults write NSGlobalDomain NSAutomaticQuoteSubstitutionEnabled -bool false
 # Disable auto-correct
 defaults write NSGlobalDomain NSAutomaticSpellingCorrectionEnabled -bool false
 
-
+# Enable dragging from anywhere in window using CTRL+CMD and left click drag
+defaults write -g NSWindowShouldDragOnGesture -bool true
 
 #################### Application related settings ####################
 
+## Example app specific settings:
 # # Set up my preferred keyboard shortcuts
 # cp -r init/spectacle.json ~/Library/Application\ Support/Spectacle/Shortcuts.json 2> /dev/null
-
 
 # Restart all affected applications
 killall Dock

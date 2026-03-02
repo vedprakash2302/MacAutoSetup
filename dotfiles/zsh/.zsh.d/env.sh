@@ -4,8 +4,8 @@ export SAVEHIST=100000
 export HISTSIZE=100000
 
 # Editor setup
-export GIT_EDITOR=nvim
-export EDITOR=nvim
+export GIT_EDITOR=vim
+export EDITOR=vim
 
 # GNU coreutils (ls, cat, etc.)
 export PATH="/opt/homebrew/opt/coreutils/libexec/gnubin:$PATH"

@@ -22,50 +22,48 @@
   "typescript.preferences.includePackageJsonAutoImports": "auto",
   "typescript.suggest.autoImports": true,
   "editor.codeActionsOnSave": {
-    "source.fixAll.eslint": "always"
+    "source.fixAll.eslint": "always",
   },
   "files.exclude": {
     "**/.turbo": true,
-    "**/node_modules": true
+    "**/node_modules": true,
   },
-  "workbench.iconTheme": "material-icon-theme",
   "workbench.activityBar.location": "hidden",
   "workbench.editor.editorActionsLocation": "hidden",
   "vsicons.dontShowNewVersionMessage": true,
-  "editor.wordWrap": "on",
   "editor.minimap.enabled": true,
   "python.languageServer": "None",
   "git.mergeEditor": true,
   "diffEditor.renderSideBySide": true,
   "cursor.composer.shouldAllowCustomModes": true,
   "[toml]": {
-    "editor.defaultFormatter": "tamasfe.even-better-toml"
+    "editor.defaultFormatter": "tamasfe.even-better-toml",
   },
   "python.analysis.packageIndexDepths": [
     {
       "name": "sklearn",
-      "depth": 2
+      "depth": 2,
     },
     {
       "name": "matplotlib",
-      "depth": 2
+      "depth": 2,
     },
     {
       "name": "scipy",
-      "depth": 2
+      "depth": 2,
     },
     {
       "name": "django",
-      "depth": 2
+      "depth": 2,
     },
     {
       "name": "flask",
-      "depth": 2
+      "depth": 2,
     },
     {
       "name": "fastapi",
-      "depth": 2
-    }
+      "depth": 2,
+    },
   ],
   "makefile.configureOnOpen": false,
   "cursor.windowSwitcher.sidebarHoverCollapsed": true,
@@ -75,5 +73,16 @@
   "explorer.confirmDragAndDrop": false,
   "editor.fontLigatures": false,
   "workbench.colorTheme": "Gruvbox Dark Medium",
-  "symbols.hidesExplorerArrows": false
+  "symbols.hidesExplorerArrows": false,
+  "workbench.iconTheme": "material-icon-theme",
+  "editor.minimap.renderCharacters": false,
+  "editor.minimap.size": "fit",
+  "editor.minimap.showSlider": "always",
+  "redhat.telemetry.enabled": true,
+  "vs-kubernetes": {
+    "vscode-kubernetes.helm-path-mac": "/Users/pandeyv3/.vs-kubernetes/tools/helm/darwin-arm64/helm",
+    "vscode-kubernetes.kubectl-path-mac": "/Users/pandeyv3/.vs-kubernetes/tools/kubectl/kubectl",
+    "vscode-kubernetes.minikube-path-mac": "/Users/pandeyv3/.vs-kubernetes/tools/minikube/darwin-arm64/minikube",
+  },
+  "yaml.maxItemsComputed": 50000,
 }
