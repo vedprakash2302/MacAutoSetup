@@ -23,6 +23,7 @@ APPLY_MACOS_DEFAULTS=auto
 MINIMAL_DOCK=0
 KEYBOARD_SHORTCUTS=0
 EXPERIMENTAL_MACOS_DEFAULTS=0
+VERBOSE=0
 
 usage() {
   cat <<'EOF'
@@ -33,6 +34,7 @@ Usage: bin/setup [options]
   --with-docker              Install Docker and lazydocker on Linux
   --with-personal-apps       Install optional macOS applications
   --dry-run                  Print actions without changing the machine
+  --verbose                  Stream full command output as well as logging it
   --interactive              Open the descriptive guided installer
   --non-interactive          Explicitly use flags without prompting
   --macos-defaults           Apply conservative macOS preferences
@@ -55,6 +57,7 @@ while [ "$#" -gt 0 ]; do
     --with-docker) WITH_DOCKER=1; shift ;;
     --with-personal-apps) WITH_PERSONAL_APPS=1; shift ;;
     --dry-run) DRY_RUN=1; shift ;;
+    --verbose) VERBOSE=1; shift ;;
     --interactive) shift; exec "$REPO_ROOT/bin/install" "$@" ;;
     --non-interactive) shift ;;
     --macos-defaults) APPLY_MACOS_DEFAULTS=1; shift ;;
@@ -305,9 +308,7 @@ main() {
 
   progress_init
   trap 'progress_failed "$?" "$LINENO"' ERR
-  printf 'MacAutoSetup\n'
-  printf 'Machine: %s/%s %s on %s\n' "$OS" "$DISTRO" "$DISTRO_VERSION" "$ARCH"
-  printf 'Profile: %s\n' "$PROFILE"
+  progress_header "$OS/$DISTRO $DISTRO_VERSION on $ARCH" "$PROFILE"
 
   if [ "$DOTFILES_ONLY" != 1 ]; then
     progress_begin "Preparing the machine" "Refresh the platform package manager and check prerequisites."

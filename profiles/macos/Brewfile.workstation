@@ -1,4 +1,4 @@
-tap "nikitabobko/tap"
+tap "nikitabobko/tap", trusted: { cask: "aerospace" }
 
 brew "bitwarden-cli"
 brew "mas"
@@ -6,7 +6,7 @@ brew "mas"
 cask "cursor"
 cask "ghostty"
 cask "raycast"
-cask "docker"
+cask "docker-desktop"
 cask "nikitabobko/tap/aerospace"
 cask "font-jetbrains-mono-nerd-font"
 cask "chatgpt"

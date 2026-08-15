@@ -58,6 +58,14 @@ PY
     [[ "$checksum" =~ ^[0-9a-f]{64}$ ]] || fail "invalid Gum checksum: $checksum"
   done
   pass "interactive UI binary pins"
+
+  grep -Fq 'tap "nikitabobko/tap", trusted: { cask: "aerospace" }' \
+    "$REPO_ROOT/profiles/macos/Brewfile.workstation" || fail "Aerospace cask trust is not scoped declaratively"
+  grep -Fq 'cask "docker-desktop"' "$REPO_ROOT/profiles/macos/Brewfile.workstation" || \
+    fail "workstation bundle does not use the current Docker Desktop cask token"
+  grep -Fq 'tap "jorgerojas26/lazysql", trusted: { formula: "lazysql" }' \
+    "$REPO_ROOT/profiles/macos/Brewfile.optional" || fail "lazysql formula trust is not scoped declaratively"
+  pass "Homebrew cask names and scoped tap trust"
 }
 
 macos_settings_safety() {
@@ -150,6 +158,27 @@ interactive_installer() {
   pass "descriptive interactive installer selection mapping"
 }
 
+concise_progress() {
+  local concise_home="$TEST_ROOT/concise-home" verbose_home="$TEST_ROOT/verbose-home"
+  local concise_output verbose_output concise_log
+  mkdir -p "$concise_home" "$verbose_home"
+
+  concise_output="$(HOME="$concise_home" TERM=xterm-256color MACAUTOSETUP_TEST_COMPACT=1 \
+    "$REPO_ROOT/bin/setup" --dotfiles-only --skip-plugins --no-shell-change --no-verify 2>&1)"
+  [[ "$concise_output" == *"Concise view: full output is being saved"* ]] || \
+    fail "concise installation does not identify its detailed log"
+  [[ "$concise_output" != *"[setup] Linking zsh dotfiles"* ]] || \
+    fail "concise installation leaked command output into the dashboard"
+  [[ "$concise_output" == *"Setup complete"* ]] || fail "concise installation did not show its completion summary"
+  concise_log="$(find "$concise_home/.local/state/macautosetup/logs" -type f -name '*.log' -print -quit)"
+  grep -q '\[setup\] Linking zsh dotfiles' "$concise_log" || fail "concise installation did not retain command output"
+
+  verbose_output="$(HOME="$verbose_home" TERM=xterm-256color MACAUTOSETUP_TEST_COMPACT=1 \
+    "$REPO_ROOT/bin/setup" --dotfiles-only --skip-plugins --no-shell-change --no-verify --verbose 2>&1)"
+  [[ "$verbose_output" == *"[setup] Linking zsh dotfiles"* ]] || fail "--verbose did not stream command output"
+  pass "fixed concise dashboard and verbose output override"
+}
+
 release_asset() {
   local asset="$TEST_ROOT/bootstrap"
   sed -e 's/__RELEASE_REF__/v0.0.0/g' \
@@ -194,6 +223,7 @@ dotfile_lifecycle() {
 syntax_checks
 dry_run_matrix
 interactive_installer
+concise_progress
 macos_settings_safety
 release_asset
 dotfile_lifecycle

@@ -9,6 +9,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 . "$REPO_ROOT/versions.env"
 
 DRY_RUN=0
+VERBOSE=0
 UI_TOOL=""
 UI_TEMP_DIR=""
 UI_RESULT=""
@@ -18,7 +19,7 @@ IFS='|' read -r -a TEST_CHOICES <<< "${MACAUTOSETUP_TEST_CHOICES:-}"
 
 usage() {
   cat <<'EOF'
-Usage: bin/install [--dry-run]
+Usage: bin/install [--dry-run] [--verbose]
 
 Run the descriptive interactive installer. Use bin/setup directly for
 non-interactive automation and repeatable flag-based installation.
@@ -28,6 +29,7 @@ EOF
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --dry-run) DRY_RUN=1 ;;
+    --verbose) VERBOSE=1 ;;
     -h|--help) usage; exit 0 ;;
     *) die "Unknown interactive installer option: $1" ;;
   esac
@@ -352,6 +354,7 @@ build_setup_args() {
   [ "$EXPERIMENTAL_MACOS_DEFAULTS" = 1 ] && SETUP_ARGS+=(--experimental-macos-defaults)
   [ "$CHANGE_SHELL" = 0 ] && SETUP_ARGS+=(--no-shell-change)
   [ "$DRY_RUN" = 1 ] && SETUP_ARGS+=(--dry-run)
+  [ "$VERBOSE" = 1 ] && SETUP_ARGS+=(--verbose)
   return 0
 }
 
@@ -380,6 +383,8 @@ print_plan() {
   fi
   if [ "$CHANGE_SHELL" = 1 ]; then ui_plan_row "Default shell" "✓ change to Zsh" enabled
   else ui_plan_row "Default shell" "– unchanged" skipped; fi
+  if [ "$VERBOSE" = 1 ]; then ui_plan_row "Installation output" "stream everything" warning
+  else ui_plan_row "Installation output" "concise dashboard + detailed log" enabled; fi
 
   printf -v command '%q' "$REPO_ROOT/bin/setup"
   for argument in "${SETUP_ARGS[@]}"; do printf -v command '%s %q' "$command" "$argument"; done

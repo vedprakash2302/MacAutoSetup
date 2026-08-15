@@ -38,6 +38,9 @@ The bootstrap expects Bash, `curl`, outbound HTTPS, a supported package manager,
 # Preview without changing the machine
 ~/.local/share/macautosetup/repo/bin/setup --dry-run
 
+# Stream all package-manager and command output during a real installation
+~/.local/share/macautosetup/repo/bin/setup --verbose
+
 # Install Docker on Linux and its terminal UI
 bash -c "$(curl -fsSL https://github.com/vedprakash2302/MacAutoSetup/releases/latest/download/bootstrap)" -- --with-docker
 
@@ -67,13 +70,15 @@ The guided interface is powered by a temporary, checksum-verified Gum binary and
 
 ## Installation progress
 
-Setup displays numbered stages with a short explanation, completion time, and final verification result. Package-manager output remains visible so administrator prompts and useful errors are never hidden. Every non-dry-run installation also writes a detailed transcript to:
+Real interactive installations use a concise three-line dashboard that is redrawn in place, so the progress bar remains visible instead of scrolling with package-manager output. Full command output is written to the installation log. Use `--verbose` to stream that output to the terminal as well. Dry runs and non-TTY automation remain verbose because their output is intended for inspection and capture.
+
+Every non-dry-run installation writes a detailed transcript to:
 
 ```text
 ~/.local/state/macautosetup/logs/<timestamp>.log
 ```
 
-If a stage fails, setup reports the stage, exit status, log location, and a safe rerun instruction. Successful completion prints recovery locations and the next action required to activate the configured shell.
+If a stage fails, setup reports the stage, exit status, the last 18 log lines, the complete log location, and a safe rerun instruction. Successful completion prints recovery locations and the next action required to activate the configured shell.
 
 ## Author mode
 

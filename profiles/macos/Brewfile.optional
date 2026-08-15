@@ -1,4 +1,4 @@
-tap "jorgerojas26/lazysql"
+tap "jorgerojas26/lazysql", trusted: { formula: "lazysql" }
 
 brew "lazysql"
 brew "wget"
