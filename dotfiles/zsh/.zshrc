@@ -1,6 +1,9 @@
 # Keep startup deterministic: configuration never downloads or installs anything.
-autoload -Uz compinit
-compinit
+if [[ -o interactive ]]; then
+  autoload -Uz compinit
+  # Ignore insecure system completion directories instead of prompting during startup.
+  compinit -i
+fi
 
 for config_file in env commands aliases functions; do
   config_path="$HOME/.zsh.d/$config_file.sh"

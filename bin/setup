@@ -267,6 +267,19 @@ write_state() {
   } > "$state_file"
 }
 
+invoke_macos_settings() {
+  if [ "$DRY_RUN" = 1 ]; then
+    if [ "$(uname -s)" = Darwin ]; then
+      "$REPO_ROOT/dotfiles/macos/setup-commands.sh" --dry-run "$@"
+    else
+      MACAUTOSETUP_TEST_OS=macos MACAUTOSETUP_TEST_MACOS_MAJOR=26 \
+        "$REPO_ROOT/dotfiles/macos/setup-commands.sh" --dry-run "$@"
+    fi
+  else
+    "$REPO_ROOT/dotfiles/macos/setup-commands.sh" "$@"
+  fi
+}
+
 main() {
   detect_platform
   # shellcheck disable=SC1090
@@ -349,15 +362,10 @@ main() {
     [ "$MINIMAL_DOCK" = 1 ] && macos_settings_args+=(--minimal-dock)
     [ "$KEYBOARD_SHORTCUTS" = 1 ] && macos_settings_args+=(--keyboard-shortcuts)
     [ "$EXPERIMENTAL_MACOS_DEFAULTS" = 1 ] && macos_settings_args+=(--experimental)
-    if [ "$DRY_RUN" = 1 ]; then
-      if [ "$(uname -s)" = Darwin ]; then
-        "$REPO_ROOT/dotfiles/macos/setup-commands.sh" --dry-run "${macos_settings_args[@]}"
-      else
-        MACAUTOSETUP_TEST_OS=macos MACAUTOSETUP_TEST_MACOS_MAJOR=26 \
-          "$REPO_ROOT/dotfiles/macos/setup-commands.sh" --dry-run "${macos_settings_args[@]}"
-      fi
+    if [ "${#macos_settings_args[@]}" -eq 0 ]; then
+      invoke_macos_settings
     else
-      "$REPO_ROOT/dotfiles/macos/setup-commands.sh" "${macos_settings_args[@]}"
+      invoke_macos_settings "${macos_settings_args[@]}"
     fi
     progress_done
   fi
