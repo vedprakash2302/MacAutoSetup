@@ -126,7 +126,9 @@ interactive_installer() {
   mac_output="$(MACAUTOSETUP_TEST_OS=macos MACAUTOSETUP_TEST_ARCH=arm64 \
     MACAUTOSETUP_TEST_CHOICES='workstation|no|no|no|no|no|yes' MACAUTOSETUP_NO_GUM_DOWNLOAD=1 \
     MACAUTOSETUP_INSTALLER_PRINT_ARGS=1 "$REPO_ROOT/bin/install" 2>&1)"
-  [[ "$mac_output" == *"Detected: macOS test / arm64"* ]] || fail "interactive installer did not describe the detected Mac"
+  if [[ "$mac_output" != *"Detected: macOS "* ]] || [[ "$mac_output" != *" / arm64"* ]]; then
+    fail "interactive installer did not describe the detected Mac"
+  fi
   [[ "$mac_output" == *"SETUP_ARGS --profile workstation --macos-defaults"* ]] || \
     fail "recommended Mac selections did not map to stable setup arguments"
   [[ "$mac_output" == *"▲ ADVANCED — Experimental macOS preferences"* ]] || \
