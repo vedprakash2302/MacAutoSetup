@@ -24,7 +24,7 @@ Defaults are selected automatically:
 
 Supported Linux targets are Ubuntu 22.04/24.04 and Amazon Linux 2/2023 on x86_64 or ARM64.
 
-The bootstrap expects Bash, `curl`, outbound HTTPS, a supported package manager, and administrator access. Vedup requests administrator approval once, before the compact dashboard starts, and refreshes sudo's temporary credential for the duration of setup. It never reads or stores your password. macOS permission prompts from the operating system may still appear.
+The bootstrap expects Bash, `curl`, outbound HTTPS, a supported package manager, and administrator access. Vedup first checks whether the account can run sudo commands without a password. Otherwise, it requests administrator approval once before the compact dashboard starts and refreshes sudo's temporary credential for the duration of setup. It never reads or stores your password. macOS permission prompts from the operating system may still appear.
 
 ## Options
 
@@ -72,7 +72,7 @@ The guided interface is powered by a temporary, checksum-verified Gum binary and
 
 Real interactive installations use a fixed dashboard that is redrawn in place, so the progress bar remains visible instead of scrolling with package-manager output. A heartbeat shows the elapsed time alongside the five most recent output lines, making long downloads visibly active without filling the terminal. Full command output is written to the installation log. Use `--verbose` to stream that output to the terminal as well. Dry runs and non-TTY automation remain verbose because their output is intended for inspection and capture.
 
-System package installation cannot safely bypass administrator authentication. When setup needs it, the initial sudo prompt is deliberately shown before output capture begins; all later sudo calls are non-interactive, so a hidden password prompt cannot stall the dashboard. Accounts configured with passwordless sudo or macOS sudo Touch ID will use that policy automatically, but Vedup does not weaken the machine's sudo configuration.
+System package installation cannot safely bypass administrator authentication. When setup needs it, the initial sudo prompt is deliberately shown before output capture begins; all later sudo calls are non-interactive, so a hidden password prompt cannot stall the dashboard. Accounts configured with passwordless sudo skip the prompt, while macOS sudo Touch ID follows the machine's existing policy. Vedup does not weaken the machine's sudo configuration.
 
 Every non-dry-run installation writes a detailed transcript to:
 

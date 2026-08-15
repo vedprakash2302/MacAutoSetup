@@ -36,17 +36,22 @@ sudo_acquire() {
   has sudo || die "Administrator access is required, but sudo is not installed."
 
   printf '\n%bAdministrator approval%b\n' "$SETUP_BOLD" "$SETUP_RESET"
-  printf 'Vedup asks once before installation and keeps this temporary approval active.\n'
-  printf 'Your password is handled by sudo and is never read or stored by Vedup.\n\n'
-  sudo -v || die "Administrator approval was not granted."
-  printf '%b✓%b Administrator approval ready.\n' "$SETUP_GREEN" "$SETUP_RESET"
+  if sudo -n true >/dev/null 2>&1; then
+    printf '%b✓%b This account already has administrator access; no password is needed.\n' \
+      "$SETUP_GREEN" "$SETUP_RESET"
+  else
+    printf 'Vedup asks once before installation and keeps this temporary approval active.\n'
+    printf 'Your password is handled by sudo and is never read or stored by Vedup.\n\n'
+    sudo -v || die "Administrator approval was not granted."
+    printf '%b✓%b Administrator approval ready.\n' "$SETUP_GREEN" "$SETUP_RESET"
+  fi
 
   (
     trap - ERR
     set +e
     while :; do
       sleep 50
-      sudo -n -v >/dev/null 2>&1 || exit 0
+      sudo -n true >/dev/null 2>&1 || exit 0
     done
   ) &
   SUDO_KEEPALIVE_PID=$!

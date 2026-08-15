@@ -149,7 +149,7 @@ interactive_installer() {
     fail "Linux interactive selections did not map to setup arguments"
   [[ "$linux_output" == *"Vedup"* && "$linux_output" == *"Nice to meet you! Let's set your machine up!"* ]] || \
     fail "interactive installer does not show the Vedup welcome"
-  [[ "$linux_output" == *"Administrator approval"* && "$linux_output" == *"one visible prompt before setup"* ]] || \
+  [[ "$linux_output" == *"Administrator approval"* && "$linux_output" == *"passwordless when allowed; otherwise one prompt"* ]] || \
     fail "interactive installer does not disclose its sudo approval flow"
   [[ "$linux_output" == *"__     __"* ]] || fail "interactive installer does not show the Vedup ASCII art"
   [[ "$linux_output" == *"That group has root-equivalent control"* ]] || \
@@ -202,9 +202,14 @@ concise_progress() {
 
 administrator_approval() {
   local fake_bin="$TEST_ROOT/fake-sudo-bin" sudo_log="$TEST_ROOT/fake-sudo.log"
+  local prompt_log="$TEST_ROOT/fake-sudo-prompt.log" auth_marker="$TEST_ROOT/fake-sudo.auth"
   mkdir -p "$fake_bin"
   # shellcheck disable=SC2016
-  printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >> "$MACAUTOSETUP_TEST_SUDO_LOG"\n' > "$fake_bin/sudo"
+  printf '%s\n' '#!/usr/bin/env bash' \
+    'printf "%s\n" "$*" >> "$MACAUTOSETUP_TEST_SUDO_LOG"' \
+    'if [ "${MACAUTOSETUP_TEST_SUDO_MODE:-}" = prompt ] && [ "$*" = "-n true" ] && [ ! -e "$MACAUTOSETUP_TEST_SUDO_AUTH" ]; then exit 1; fi' \
+    'if [ "$*" = "-v" ] && [ -n "${MACAUTOSETUP_TEST_SUDO_AUTH:-}" ]; then : > "$MACAUTOSETUP_TEST_SUDO_AUTH"; fi' \
+    > "$fake_bin/sudo"
   chmod +x "$fake_bin/sudo"
 
   PATH="$fake_bin:$PATH" MACAUTOSETUP_TEST_SUDO_LOG="$sudo_log" bash -c '
@@ -216,8 +221,19 @@ administrator_approval() {
     sudo_release
   ' _ "$REPO_ROOT/lib/common.sh" >/dev/null
 
-  grep -Fxq -- '-v' "$sudo_log" || fail "setup did not acquire sudo before output capture"
+  grep -Fxq -- '-n true' "$sudo_log" || fail "setup did not probe passwordless sudo with a real command"
+  ! grep -Fxq -- '-v' "$sudo_log" || fail "passwordless sudo unnecessarily requested a password"
   grep -Fxq -- '-n /usr/bin/true' "$sudo_log" || fail "privileged commands can still open a hidden prompt"
+
+  PATH="$fake_bin:$PATH" MACAUTOSETUP_TEST_SUDO_LOG="$prompt_log" \
+    MACAUTOSETUP_TEST_SUDO_MODE=prompt MACAUTOSETUP_TEST_SUDO_AUTH="$auth_marker" bash -c '
+      set -Eeuo pipefail
+      . "$1"
+      DRY_RUN=0
+      sudo_acquire
+      sudo_release
+    ' _ "$REPO_ROOT/lib/common.sh" >/dev/null
+  grep -Fxq -- '-v' "$prompt_log" || fail "password-required sudo did not request visible approval"
   pass "single visible administrator approval and non-interactive sudo"
 }
 
