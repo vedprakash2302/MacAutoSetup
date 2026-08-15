@@ -1,0 +1,426 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck disable=SC1091
+. "$REPO_ROOT/lib/common.sh"
+# shellcheck disable=SC1091
+. "$REPO_ROOT/versions.env"
+
+DRY_RUN=0
+UI_TOOL=""
+UI_TEMP_DIR=""
+UI_RESULT=""
+UI_WIDTH=72
+TEST_CHOICE_INDEX=0
+IFS='|' read -r -a TEST_CHOICES <<< "${MACAUTOSETUP_TEST_CHOICES:-}"
+
+usage() {
+  cat <<'EOF'
+Usage: bin/install [--dry-run]
+
+Run the descriptive interactive installer. Use bin/setup directly for
+non-interactive automation and repeatable flag-based installation.
+EOF
+}
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --dry-run) DRY_RUN=1 ;;
+    -h|--help) usage; exit 0 ;;
+    *) die "Unknown interactive installer option: $1" ;;
+  esac
+  shift
+done
+
+cleanup_ui() {
+  if [ -n "$UI_TEMP_DIR" ]; then
+    case "$UI_TEMP_DIR" in
+      "${TMPDIR:-/tmp}"/macautosetup-gum.*) rm -rf -- "$UI_TEMP_DIR" ;;
+    esac
+  fi
+}
+trap cleanup_ui EXIT
+
+normalize_platform() {
+  local machine columns
+  case "${MACAUTOSETUP_TEST_OS:-$(uname -s)}" in
+    macos|Darwin) OS=macos ;;
+    linux|Linux) OS=linux ;;
+    *) die "Unsupported operating system: $(uname -s)" ;;
+  esac
+  machine="${MACAUTOSETUP_TEST_ARCH:-$(uname -m)}"
+  case "$machine" in
+    x64|x86_64|amd64) ARCH=x64 ;;
+    arm64|aarch64) ARCH=arm64 ;;
+    *) die "Unsupported architecture: $machine" ;;
+  esac
+  if [ "$OS" = macos ]; then
+    PLATFORM_NAME="macOS $(sw_vers -productVersion 2>/dev/null || printf 'test') / $ARCH"
+  else
+    if [ -n "${MACAUTOSETUP_TEST_DISTRO:-}" ]; then
+      distro_name="$MACAUTOSETUP_TEST_DISTRO ${MACAUTOSETUP_TEST_DISTRO_VERSION:-test}"
+    elif [ -r /etc/os-release ]; then
+      # shellcheck disable=SC1091
+      . /etc/os-release
+      distro_name="${PRETTY_NAME:-$ID}"
+    else
+      distro_name=Linux
+    fi
+    PLATFORM_NAME="$distro_name / $ARCH"
+  fi
+  columns="$(tput cols 2>/dev/null || true)"
+  case "$columns" in
+    ''|*[!0-9]*) ;;
+    *) if [ "$columns" -lt 76 ] && [ "$columns" -gt 24 ]; then UI_WIDTH=$((columns - 4)); fi ;;
+  esac
+}
+
+prepare_gum() {
+  local gum_os gum_arch asset checksum archive extracted
+  [ "${TERM:-}" != dumb ] || return 0
+  if [ -n "${MACAUTOSETUP_GUM:-}" ] && [ -x "$MACAUTOSETUP_GUM" ]; then
+    UI_TOOL="$MACAUTOSETUP_GUM"
+    return
+  fi
+  if has gum; then UI_TOOL="$(command -v gum)"; return; fi
+  [ "${MACAUTOSETUP_NO_GUM_DOWNLOAD:-0}" != 1 ] || return 0
+  has curl && has tar || return 0
+
+  case "$OS" in macos) gum_os=Darwin ;; linux) gum_os=Linux ;; esac
+  case "$ARCH" in x64) gum_arch=x86_64 ;; arm64) gum_arch=arm64 ;; esac
+  case "$OS/$ARCH" in
+    linux/x64) checksum="$GUM_SHA_LINUX_X64" ;;
+    linux/arm64) checksum="$GUM_SHA_LINUX_ARM64" ;;
+    macos/x64) checksum="$GUM_SHA_MACOS_X64" ;;
+    macos/arm64) checksum="$GUM_SHA_MACOS_ARM64" ;;
+  esac
+  asset="gum_${GUM_VERSION}_${gum_os}_${gum_arch}.tar.gz"
+  UI_TEMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/macautosetup-gum.XXXXXX")"
+  archive="$UI_TEMP_DIR/$asset"
+  if ! animated_download "https://github.com/charmbracelet/gum/releases/download/v${GUM_VERSION}/$asset" "$checksum" "$archive"; then
+    warn "Could not download the enhanced interface; using numbered menus."
+    return 0
+  fi
+  if ! tar -xzf "$archive" -C "$UI_TEMP_DIR"; then
+    warn "Could not unpack the enhanced interface; using numbered menus."
+    return 0
+  fi
+  extracted="$UI_TEMP_DIR/gum_${GUM_VERSION}_${gum_os}_${gum_arch}/gum"
+  if [ ! -f "$extracted" ]; then
+    warn "The enhanced interface archive did not contain the expected binary; using numbered menus."
+    return 0
+  fi
+  [ -x "$extracted" ] || chmod +x "$extracted"
+  [ -x "$extracted" ] && UI_TOOL="$extracted"
+  return 0
+}
+
+animated_download() {
+  local url="$1" checksum="$2" archive="$3" pid frame=0
+  local frames=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
+  if [ ! -t 1 ] || [ -n "${NO_COLOR:-}" ] || [ "${TERM:-}" = dumb ]; then
+    (download_verified "$url" "$checksum" "$archive" force)
+    return
+  fi
+  (download_verified "$url" "$checksum" "$archive" force) &
+  pid=$!
+  while kill -0 "$pid" 2>/dev/null; do
+    printf '\r\033[38;5;212m%s\033[0m Preparing the guided interface...' "${frames[$frame]}"
+    frame=$(((frame + 1) % ${#frames[@]}))
+    sleep 0.08
+  done
+  if wait "$pid"; then
+    printf '\r\033[2K\033[38;5;42m✓\033[0m Guided interface ready.\n'
+    return 0
+  fi
+  printf '\r\033[2K'
+  return 1
+}
+
+ui_title() {
+  if [ -n "$UI_TOOL" ]; then
+    "$UI_TOOL" style --border double --padding "1 3" --margin "1 0" --width "$UI_WIDTH" --align center \
+      --bold --border-foreground 99 --foreground 212 "$1"
+  else
+    printf '\n╔══════════════════════════════════════════════════════════════════════╗\n'
+    printf '%s\n' "$1"
+    printf '╚══════════════════════════════════════════════════════════════════════╝\n'
+  fi
+}
+
+ui_heading() {
+  if [ -n "$UI_TOOL" ]; then
+    "$UI_TOOL" style --bold --foreground 86 "◆ $1"
+  else
+    printf '\n◆ %s\n' "$1"
+  fi
+}
+
+ui_text() { printf '%s\n' "$*"; }
+
+ui_risk_heading() {
+  local level="$1" title="$2" color label
+  case "$level" in
+    destructive) color=196; label="DESTRUCTIVE" ;;
+    advanced) color=214; label="ADVANCED" ;;
+  esac
+  if [ -n "$UI_TOOL" ]; then
+    "$UI_TOOL" style --bold --foreground "$color" "▲ $label  $title"
+  else
+    printf '\n▲ %s — %s\n' "$label" "$title"
+  fi
+}
+
+ui_plan_row() {
+  local label="$1" value="$2" state="$3" color=252 line
+  case "$state" in
+    enabled) color=42 ;;
+    warning) color=214 ;;
+    skipped) color=245 ;;
+  esac
+  printf -v line '%-23s %s' "$label" "$value"
+  if [ -n "$UI_TOOL" ]; then "$UI_TOOL" style --foreground "$color" "$line"
+  else printf '%s\n' "$line"; fi
+}
+
+ui_choose() {
+  local header="$1" answer index=1 option
+  local options=()
+  shift
+  options=("$@")
+  if [ -n "${MACAUTOSETUP_TEST_CHOICES:-}" ]; then
+    [ "$TEST_CHOICE_INDEX" -lt "${#TEST_CHOICES[@]}" ] || die "Test choice queue exhausted at: $header"
+    UI_RESULT="${TEST_CHOICES[$TEST_CHOICE_INDEX]}"
+    TEST_CHOICE_INDEX=$((TEST_CHOICE_INDEX + 1))
+    return
+  fi
+  if [ -n "$UI_TOOL" ]; then
+    UI_RESULT="$("$UI_TOOL" choose --header "$header" --height 8 --cursor '❯ ' \
+      --cursor.foreground 212 --header.foreground 86 --item.foreground 252 \
+      --selected.foreground 212 "$@")" || die "Installation cancelled."
+    return
+  fi
+  printf '\n%s\n' "$header" >/dev/tty
+  for option in "$@"; do printf '  %s) %s\n' "$index" "$option" >/dev/tty; index=$((index + 1)); done
+  while :; do
+    printf 'Choose 1-%s: ' "$#" >/dev/tty
+    IFS= read -r answer </dev/tty || die "Installation cancelled."
+    case "$answer" in *[!0-9]*|'') ;; *)
+      if [ "$answer" -ge 1 ] && [ "$answer" -le "$#" ]; then
+        UI_RESULT="${options[$((answer - 1))]}"
+        return
+      fi
+      ;;
+    esac
+    printf 'Please enter a number from 1 to %s.\n' "$#" >/dev/tty
+  done
+}
+
+ask_yes_no() {
+  local default="$1" heading="$2"
+  if [ "$default" = yes ]; then
+    ui_choose "$heading" "Yes — include this" "No — skip this"
+  else
+    ui_choose "$heading" "No — leave this unchanged" "Yes — include this"
+  fi
+  case "$UI_RESULT" in
+    yes|Yes*) UI_RESULT=yes ;;
+    no|No*) UI_RESULT=no ;;
+    *) die "Unexpected selection for $heading: $UI_RESULT" ;;
+  esac
+}
+
+describe_profiles() {
+  ui_heading "Choose the kind of environment"
+  if [ "$OS" = macos ]; then
+    ui_text "Recommended workstation"
+    ui_text "  Terminal tools, pinned Node and Python, Neovim, desktop applications,"
+    ui_text "  dotfiles, and conservative macOS preferences."
+    ui_text ""
+  fi
+  ui_text "Terminal development"
+  ui_text "  Git, Zsh, tmux, Starship, modern search/file tools, pinned Node and Python,"
+  ui_text "  Neovim, GitHub CLI and lazygit; no desktop apps or macOS changes."
+  ui_text ""
+  if [ "$OS" = macos ]; then
+    ui_text "Custom"
+    ui_text "  Decide whether to include the desktop bundle and safe macOS preferences."
+  fi
+}
+
+choose_profile() {
+  describe_profiles
+  if [ "$OS" = linux ]; then
+    PROFILE=server
+    APPLY_MACOS_DEFAULTS=0
+    ui_text "Linux automatically uses the terminal development profile; optional Docker"
+    ui_text "and AWS tooling can be selected next."
+    return 0
+  fi
+  ui_choose "Starting point" "Recommended workstation" "Terminal development" "Custom"
+  case "$UI_RESULT" in
+    workstation|Recommended*) PROFILE=workstation; APPLY_MACOS_DEFAULTS=1 ;;
+    terminal|Terminal*) PROFILE=server; APPLY_MACOS_DEFAULTS=0 ;;
+    custom|Custom*)
+      if [ "$OS" = macos ]; then
+        ui_heading "Desktop application bundle"
+        ui_text "Editors and terminals: Ghostty, Cursor and Zed."
+        ui_text "Development and web: Docker Desktop, Chrome, Dia and Bitwarden CLI."
+        ui_text "Utilities: ChatGPT, Raycast, Aerospace, Shottr, Jump Desktop, Hidden Bar,"
+        ui_text "Logi Options+, Amphetamine, Peek and a JetBrains Mono Nerd Font."
+        ask_yes_no no "Install the macOS workstation application bundle?"
+        if [ "$UI_RESULT" = yes ]; then PROFILE=workstation; else PROFILE=server; fi
+        ui_heading "Safe macOS preferences"
+        ui_text "Adjusts documented-style Finder, keyboard, text-entry, Dock and TextEdit"
+        ui_text "behavior. A restorable preference snapshot is created before changes."
+        ask_yes_no "$([ "$PROFILE" = workstation ] && printf yes || printf no)" "Apply conservative macOS preferences?"
+        if [ "$UI_RESULT" = yes ]; then APPLY_MACOS_DEFAULTS=1; else APPLY_MACOS_DEFAULTS=0; fi
+      else
+        PROFILE=server
+      fi
+      ;;
+    *) die "Unexpected profile selection: $UI_RESULT" ;;
+  esac
+}
+
+choose_optional_features() {
+  WITH_AWS=0 WITH_DOCKER=0 WITH_PERSONAL_APPS=0
+  MINIMAL_DOCK=0 KEYBOARD_SHORTCUTS=0 EXPERIMENTAL_MACOS_DEFAULTS=0 CHANGE_SHELL=1
+
+  ui_heading "AWS command-line tools"
+  ui_text "Installs the AWS CLI. It does not create credentials, profiles, or modify"
+  ui_text "your existing ~/.aws configuration."
+  ask_yes_no no "Install the AWS CLI?"
+  [ "$UI_RESULT" = yes ] && WITH_AWS=1
+
+  if [ "$OS" = linux ]; then
+    ui_heading "Docker"
+    ui_text "Installs Docker Engine and lazydocker, enables the service, and adds your"
+    ui_text "user to the docker group. That group has root-equivalent control; membership"
+    ui_text "normally takes effect after logging out and back in once."
+    ask_yes_no no "Install Docker on this Linux machine?"
+    [ "$UI_RESULT" = yes ] && WITH_DOCKER=1
+  elif [ "$PROFILE" = workstation ]; then
+    ui_heading "Optional personal applications"
+    ui_text "Installs lazysql, wget, AnkerWork, Caffeine, Craft, f.lux, Focus, Warp and"
+    ui_text "MyWallpaper. These are excluded from the normal workstation bundle."
+    ask_yes_no no "Install optional personal applications?"
+    [ "$UI_RESULT" = yes ] && WITH_PERSONAL_APPS=1
+  fi
+
+  if [ "$OS" = macos ] && [ "$APPLY_MACOS_DEFAULTS" = 1 ]; then
+    ui_risk_heading destructive "Minimal Dock"
+    ui_text "Removes every pinned Dock application and displays only running apps."
+    ui_text "The current Dock preferences are backed up, but this is off by default."
+    ask_yes_no no "Replace the current Dock application list?"
+    [ "$UI_RESULT" = yes ] && MINIMAL_DOCK=1
+
+    ui_risk_heading destructive "Keyboard shortcut snapshot"
+    ui_text "Replaces the complete macOS symbolic-hotkey domain with the snapshot in"
+    ui_text "this repository. Existing shortcuts are backed up first."
+    ask_yes_no no "Replace all macOS keyboard shortcuts?"
+    [ "$UI_RESULT" = yes ] && KEYBOARD_SHORTCUTS=1
+
+    ui_risk_heading advanced "Experimental macOS preferences"
+    ui_text "Applies undocumented Finder enums, pointing-device settings, window dragging"
+    ui_text "and Dock animation keys. These can change across macOS releases."
+    ask_yes_no no "Apply undocumented macOS preferences?"
+    [ "$UI_RESULT" = yes ] && EXPERIMENTAL_MACOS_DEFAULTS=1
+  fi
+
+  ui_heading "Login shell"
+  ui_text "Changes your account's default shell to Zsh. The change takes effect in new"
+  ui_text "terminal sessions and can be reversed later with chsh."
+  ask_yes_no yes "Make Zsh the default login shell?"
+  [ "$UI_RESULT" = no ] && CHANGE_SHELL=0
+  return 0
+}
+
+build_setup_args() {
+  SETUP_ARGS=(--profile "$PROFILE")
+  [ "$WITH_AWS" = 1 ] && SETUP_ARGS+=(--with-aws)
+  [ "$WITH_DOCKER" = 1 ] && SETUP_ARGS+=(--with-docker)
+  [ "$WITH_PERSONAL_APPS" = 1 ] && SETUP_ARGS+=(--with-personal-apps)
+  if [ "$OS" = macos ]; then
+    if [ "$APPLY_MACOS_DEFAULTS" = 1 ]; then SETUP_ARGS+=(--macos-defaults)
+    else SETUP_ARGS+=(--no-macos-defaults); fi
+  fi
+  [ "$MINIMAL_DOCK" = 1 ] && SETUP_ARGS+=(--minimal-dock)
+  [ "$KEYBOARD_SHORTCUTS" = 1 ] && SETUP_ARGS+=(--keyboard-shortcuts)
+  [ "$EXPERIMENTAL_MACOS_DEFAULTS" = 1 ] && SETUP_ARGS+=(--experimental-macos-defaults)
+  [ "$CHANGE_SHELL" = 0 ] && SETUP_ARGS+=(--no-shell-change)
+  [ "$DRY_RUN" = 1 ] && SETUP_ARGS+=(--dry-run)
+  return 0
+}
+
+print_plan() {
+  local command="" argument
+  ui_title "Review installation plan"
+  ui_plan_row "Machine" "$PLATFORM_NAME" enabled
+  ui_plan_row "Environment" "$([ "$PROFILE" = workstation ] && printf 'workstation' || printf 'terminal development')" enabled
+  if [ "$WITH_AWS" = 1 ]; then ui_plan_row "AWS CLI" "✓ install" enabled
+  else ui_plan_row "AWS CLI" "– skip" skipped; fi
+  if [ "$OS" = linux ]; then
+    if [ "$WITH_DOCKER" = 1 ]; then ui_plan_row "Docker" "✓ install" enabled
+    else ui_plan_row "Docker" "– skip" skipped; fi
+  fi
+  if [ "$OS" = macos ]; then
+    if [ "$PROFILE" = workstation ]; then ui_plan_row "Desktop applications" "✓ install" enabled
+    else ui_plan_row "Desktop applications" "– skip" skipped; fi
+    if [ "$APPLY_MACOS_DEFAULTS" = 1 ]; then ui_plan_row "Safe preferences" "✓ apply" enabled
+    else ui_plan_row "Safe preferences" "– skip" skipped; fi
+    if [ "$MINIMAL_DOCK" = 1 ]; then ui_plan_row "Dock reset" "▲ apply" warning
+    else ui_plan_row "Dock reset" "– skip" skipped; fi
+    if [ "$KEYBOARD_SHORTCUTS" = 1 ]; then ui_plan_row "Shortcut replacement" "▲ apply" warning
+    else ui_plan_row "Shortcut replacement" "– skip" skipped; fi
+    if [ "$EXPERIMENTAL_MACOS_DEFAULTS" = 1 ]; then ui_plan_row "Experimental settings" "▲ apply" warning
+    else ui_plan_row "Experimental settings" "– skip" skipped; fi
+  fi
+  if [ "$CHANGE_SHELL" = 1 ]; then ui_plan_row "Default shell" "✓ change to Zsh" enabled
+  else ui_plan_row "Default shell" "– unchanged" skipped; fi
+
+  printf -v command '%q' "$REPO_ROOT/bin/setup"
+  for argument in "${SETUP_ARGS[@]}"; do printf -v command '%s %q' "$command" "$argument"; done
+  ui_heading "Equivalent reusable command"
+  if [ -n "$UI_TOOL" ]; then
+    "$UI_TOOL" style --border rounded --padding "0 1" --width "$UI_WIDTH" \
+      --border-foreground 99 --foreground 252 "$command"
+  else
+    printf '  %s\n\n' "$command"
+  fi
+}
+
+main() {
+  if [ -z "${MACAUTOSETUP_TEST_CHOICES:-}" ] && { [ ! -t 0 ] || [ ! -t 1 ]; }; then
+    die "Interactive setup needs a terminal. Use bin/setup with flags for automation."
+  fi
+  normalize_platform
+  if [ -z "${MACAUTOSETUP_TEST_CHOICES:-}" ] && ! has gum; then
+    printf 'Preparing the installer interface...\n'
+  fi
+  prepare_gum
+  ui_title $'MacAutoSetup\nDescriptive development environment installer'
+  ui_text "Detected: $PLATFORM_NAME"
+  ui_text "No machine changes will be made until you review and confirm the plan."
+  choose_profile
+  choose_optional_features
+  build_setup_args
+  print_plan
+
+  if [ "${MACAUTOSETUP_INSTALLER_PRINT_ARGS:-0}" = 1 ]; then
+    printf 'SETUP_ARGS'
+    printf ' %q' "${SETUP_ARGS[@]}"
+    printf '\n'
+    return 0
+  fi
+  if [ "$DRY_RUN" = 1 ]; then ask_yes_no yes "Run this no-change preview?"
+  else ask_yes_no yes "Begin installation?"; fi
+  [ "$UI_RESULT" = yes ] || die "Installation cancelled; no setup changes were made."
+  cleanup_ui
+  UI_TEMP_DIR=""
+  exec "$REPO_ROOT/bin/setup" "${SETUP_ARGS[@]}"
+}
+
+main

@@ -33,6 +33,9 @@ Usage: bin/setup [options]
   --with-docker              Install Docker and lazydocker on Linux
   --with-personal-apps       Install optional macOS applications
   --dry-run                  Print actions without changing the machine
+  --interactive              Open the descriptive guided installer
+  --non-interactive          Explicitly use flags without prompting
+  --macos-defaults           Apply conservative macOS preferences
   --no-macos-defaults        Do not apply tracked macOS preferences
   --minimal-dock             Remove pinned Dock apps and show only running apps
   --keyboard-shortcuts       Replace macOS shortcuts with the tracked snapshot
@@ -52,6 +55,9 @@ while [ "$#" -gt 0 ]; do
     --with-docker) WITH_DOCKER=1; shift ;;
     --with-personal-apps) WITH_PERSONAL_APPS=1; shift ;;
     --dry-run) DRY_RUN=1; shift ;;
+    --interactive) shift; exec "$REPO_ROOT/bin/install" "$@" ;;
+    --non-interactive) shift ;;
+    --macos-defaults) APPLY_MACOS_DEFAULTS=1; shift ;;
     --no-macos-defaults) APPLY_MACOS_DEFAULTS=0; shift ;;
     --minimal-dock) MINIMAL_DOCK=1; shift ;;
     --keyboard-shortcuts) KEYBOARD_SHORTCUTS=1; shift ;;
@@ -263,8 +269,6 @@ write_state() {
 
 main() {
   detect_platform
-  log "Detected $OS/$DISTRO $DISTRO_VERSION on $ARCH; profile=$PROFILE"
-
   # shellcheck disable=SC1090
   . "$REPO_ROOT/lib/platforms/$PLATFORM_ADAPTER.sh"
 
@@ -272,28 +276,75 @@ main() {
   STOW_PACKAGES=(zsh nvim starship tmux scripts)
   if [ "$OS" = macos ]; then STOW_PACKAGES+=(aerospace ghostty cursor); fi
 
+  PROGRESS_TOTAL=2
   if [ "$DOTFILES_ONLY" != 1 ]; then
+    PROGRESS_TOTAL=$((PROGRESS_TOTAL + 4))
+    [ "$PROFILE" = workstation ] && PROGRESS_TOTAL=$((PROGRESS_TOTAL + 1))
+    if [ "$WITH_DOCKER" = 1 ] || [ "$WITH_AWS" = 1 ] || { [ "$OS" = macos ] && [ "$WITH_PERSONAL_APPS" = 1 ]; }; then
+      PROGRESS_TOTAL=$((PROGRESS_TOTAL + 1))
+    fi
+    PROGRESS_TOTAL=$((PROGRESS_TOTAL + 1))
+  fi
+  if [ "$OS" = macos ] && [ "$APPLY_MACOS_DEFAULTS" = 1 ] && [ "$DOTFILES_ONLY" != 1 ]; then
+    PROGRESS_TOTAL=$((PROGRESS_TOTAL + 1))
+  fi
+  if [ "$VERIFY" = 1 ] && [ "$DRY_RUN" != 1 ]; then PROGRESS_TOTAL=$((PROGRESS_TOTAL + 1)); fi
+
+  progress_init
+  trap 'progress_failed "$?" "$LINENO"' ERR
+  printf 'MacAutoSetup\n'
+  printf 'Machine: %s/%s %s on %s\n' "$OS" "$DISTRO" "$DISTRO_VERSION" "$ARCH"
+  printf 'Profile: %s\n' "$PROFILE"
+
+  if [ "$DOTFILES_ONLY" != 1 ]; then
+    progress_begin "Preparing the machine" "Refresh the platform package manager and check prerequisites."
     platform_prepare
+    progress_done
+
+    progress_begin "Installing terminal foundations" "Install Git, Zsh, GNU Stow, tmux, and platform-level CLI dependencies."
     platform_install_foundations
+    progress_done
+
+    progress_begin "Installing Mise" "Install the pinned tool-version manager under ~/.local/bin."
     install_mise
+    progress_done
+
+    progress_begin "Installing the development toolchain" "Install pinned Node, Python, Neovim, and cross-platform CLI tools."
     install_mise_tools
     install_tlrc_linux_arm64
-    if [ "$PROFILE" = workstation ]; then platform_install_workstation; fi
-    if [ "$WITH_DOCKER" = 1 ]; then platform_install_docker; fi
-    if [ "$WITH_AWS" = 1 ]; then platform_install_aws_dependencies; fi
-    if [ "$OS" = macos ] && [ "$WITH_PERSONAL_APPS" = 1 ]; then
-      run brew bundle --file "$REPO_ROOT/profiles/macos/Brewfile.optional"
-      if ! has mas; then run brew install mas; fi
-      run "$REPO_ROOT/dotfiles/macos/mas-optional.sh"
+    progress_done
+
+    if [ "$PROFILE" = workstation ]; then
+      progress_begin "Installing workstation applications" "Install the curated macOS desktop application and font bundle."
+      platform_install_workstation
+      progress_done
+    fi
+    if [ "$WITH_DOCKER" = 1 ] || [ "$WITH_AWS" = 1 ] || { [ "$OS" = macos ] && [ "$WITH_PERSONAL_APPS" = 1 ]; }; then
+      progress_begin "Installing selected optional components" "Install only the additional capabilities selected for this machine."
+      if [ "$WITH_DOCKER" = 1 ]; then platform_install_docker; fi
+      if [ "$WITH_AWS" = 1 ]; then platform_install_aws_dependencies; fi
+      if [ "$OS" = macos ] && [ "$WITH_PERSONAL_APPS" = 1 ]; then
+        run brew bundle --file "$REPO_ROOT/profiles/macos/Brewfile.optional"
+        if ! has mas; then run brew install mas; fi
+        run "$REPO_ROOT/dotfiles/macos/mas-optional.sh"
+      fi
+      progress_done
     fi
   fi
 
+  progress_begin "Linking dotfiles" "Back up unmanaged conflicts, then link terminal and editor configuration with Stow."
   if ! has stow && [ "$DRY_RUN" != 1 ]; then die "GNU Stow is required to link dotfiles."; fi
   setup_dotfiles
+  progress_done
 
-  if [ "$SKIP_PLUGINS" != 1 ] && [ "$DOTFILES_ONLY" != 1 ]; then install_tmux_plugins; fi
-  if [ "$OS" = macos ] && [ "$DOTFILES_ONLY" != 1 ]; then install_cursor_extensions; fi
+  if [ "$DOTFILES_ONLY" != 1 ]; then
+    progress_begin "Installing terminal and editor integrations" "Pin tmux plugins and synchronize Cursor extensions when Cursor is available."
+    if [ "$SKIP_PLUGINS" != 1 ]; then install_tmux_plugins; fi
+    if [ "$OS" = macos ]; then install_cursor_extensions; fi
+    progress_done
+  fi
   if [ "$OS" = macos ] && [ "$APPLY_MACOS_DEFAULTS" = 1 ] && [ "$DOTFILES_ONLY" != 1 ]; then
+    progress_begin "Applying macOS preferences" "Create a restorable snapshot, then apply the selected safe and opt-in settings."
     macos_settings_args=()
     [ "$MINIMAL_DOCK" = 1 ] && macos_settings_args+=(--minimal-dock)
     [ "$KEYBOARD_SHORTCUTS" = 1 ] && macos_settings_args+=(--keyboard-shortcuts)
@@ -308,13 +359,21 @@ main() {
     else
       "$REPO_ROOT/dotfiles/macos/setup-commands.sh" "${macos_settings_args[@]}"
     fi
+    progress_done
   fi
 
+  progress_begin "Finalizing the login shell" "$([ "$CHANGE_SHELL" = 1 ] && printf 'Make Zsh the default for new terminal sessions.' || printf 'Keep the current default login shell.')"
   change_login_shell
   write_state
+  progress_done
 
-  if [ "$VERIFY" = 1 ] && [ "$DRY_RUN" != 1 ]; then "$REPO_ROOT/bin/doctor"; fi
-  log "Setup complete. Open a new terminal to use the configured shell."
+  if [ "$VERIFY" = 1 ] && [ "$DRY_RUN" != 1 ]; then
+    progress_begin "Verifying the installation" "Check required tools, managed links, and pinned runtime availability."
+    "$REPO_ROOT/bin/doctor"
+    progress_done
+  fi
+  trap - ERR
+  progress_finish
 }
 
 if [ "${BASH_SOURCE[0]}" = "$0" ]; then

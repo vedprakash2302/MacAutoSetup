@@ -7,8 +7,15 @@ INSTALL_ROOT="${MACAUTOSETUP_ROOT:-${XDG_DATA_HOME:-$HOME/.local/share}/macautos
 RELEASE_REF="${MACAUTOSETUP_RELEASE_REF:-__RELEASE_REF__}"
 RELEASE_COMMIT="${MACAUTOSETUP_RELEASE_COMMIT:-__RELEASE_COMMIT__}"
 
-log() { printf '[bootstrap] %s\n' "$*"; }
-die() { printf '[bootstrap] ERROR: %s\n' "$*" >&2; exit 1; }
+if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
+  BOOT_PURPLE='\033[38;5;99m' BOOT_PINK='\033[38;5;212m' BOOT_RED='\033[38;5;196m'
+  BOOT_BOLD='\033[1m' BOOT_RESET='\033[0m'
+else
+  BOOT_PURPLE='' BOOT_PINK='' BOOT_RED='' BOOT_BOLD='' BOOT_RESET=''
+fi
+
+log() { printf '%b◆%b %s\n' "$BOOT_PURPLE" "$BOOT_RESET" "$*"; }
+die() { printf '%b✗ ERROR:%b %s\n' "$BOOT_RED" "$BOOT_RESET" "$*" >&2; exit 1; }
 
 has() { command -v "$1" >/dev/null 2>&1; }
 
@@ -108,8 +115,24 @@ checkout_repo() {
 }
 
 main() {
+  printf '%b%bMacAutoSetup%b  %bFresh-machine bootstrap%b\n\n' \
+    "$BOOT_BOLD" "$BOOT_PINK" "$BOOT_RESET" "$BOOT_PURPLE" "$BOOT_RESET"
+  log "[1/3] Checking prerequisites for $(detect_os)"
   ensure_git
+  log "[2/3] Loading the tested MacAutoSetup release"
   checkout_repo
+  log "[3/3] Starting the installer"
+  if [ "${1:-}" = --interactive ]; then
+    shift
+    exec "$INSTALL_ROOT/bin/install" "$@"
+  fi
+  if [ "${1:-}" = --non-interactive ]; then
+    shift
+    exec "$INSTALL_ROOT/bin/setup" "$@"
+  fi
+  if [ "$#" -eq 0 ] && [ -t 0 ] && [ -t 1 ]; then
+    exec "$INSTALL_ROOT/bin/install"
+  fi
   exec "$INSTALL_ROOT/bin/setup" "$@"
 }
 

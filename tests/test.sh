@@ -52,6 +52,12 @@ PY
     fail "TPM cannot install a commit hash via branch syntax"
   fi
   pass "tmux plugin pins"
+
+  for checksum in "$GUM_SHA_LINUX_X64" "$GUM_SHA_LINUX_ARM64" \
+    "$GUM_SHA_MACOS_X64" "$GUM_SHA_MACOS_ARM64"; do
+    [[ "$checksum" =~ ^[0-9a-f]{64}$ ]] || fail "invalid Gum checksum: $checksum"
+  done
+  pass "interactive UI binary pins"
 }
 
 macos_settings_safety() {
@@ -87,7 +93,7 @@ macos_settings_safety() {
 }
 
 dry_run_matrix() {
-  local target os distro arch profile mac_intel_output linux_output
+  local target os distro arch profile mac_intel_output linux_output progress_output no_color_output
   for target in 'linux ubuntu x64 server' 'linux ubuntu arm64 server' 'linux amzn x64 server' 'linux amzn arm64 server' 'macos macos x64 workstation' 'macos macos arm64 workstation'; do
     read -r os distro arch profile <<< "$target"
     HOME="$TEST_ROOT/dry-$os-$distro-$arch" \
@@ -101,7 +107,45 @@ dry_run_matrix() {
   linux_output="$(HOME="$TEST_ROOT/linux-routing" MACAUTOSETUP_TEST_OS=linux MACAUTOSETUP_TEST_DISTRO=ubuntu \
     MACAUTOSETUP_TEST_ARCH=x64 "$REPO_ROOT/bin/setup" --dry-run --no-shell-change --no-verify --skip-plugins 2>&1)"
   [[ "$linux_output" == *" btop"* ]] || fail "Linux btop is not routed through Mise"
+  progress_output="$(HOME="$TEST_ROOT/progress" MACAUTOSETUP_TEST_OS=linux MACAUTOSETUP_TEST_DISTRO=ubuntu \
+    MACAUTOSETUP_TEST_ARCH=x64 "$REPO_ROOT/bin/setup" --profile server --with-docker --dry-run \
+      --no-shell-change --no-verify --skip-plugins 2>&1)"
+  [[ "$progress_output" == *"[1/8] Preparing the machine"* ]] || fail "friendly progress does not start at the expected stage"
+  [[ "$progress_output" == *"[8/8] Finalizing the login shell"* ]] || fail "friendly progress stage count is incorrect"
+  [[ "$progress_output" == *"8 stage(s) previewed; no machine changes were made."* ]] || \
+    fail "dry-run completion summary is missing or inaccurate"
+  no_color_output="$(NO_COLOR=1 HOME="$TEST_ROOT/no-color" MACAUTOSETUP_TEST_OS=linux \
+    MACAUTOSETUP_TEST_DISTRO=ubuntu MACAUTOSETUP_TEST_ARCH=x64 "$REPO_ROOT/bin/setup" --profile server \
+      --dry-run --no-shell-change --no-verify --skip-plugins 2>&1)"
+  if printf '%s' "$no_color_output" | LC_ALL=C grep -q $'\033'; then fail "NO_COLOR output contains ANSI escapes"; fi
   pass "Ubuntu, Amazon Linux, and macOS dry-run matrix"
+}
+
+interactive_installer() {
+  local mac_output linux_output custom_output
+  mac_output="$(MACAUTOSETUP_TEST_OS=macos MACAUTOSETUP_TEST_ARCH=arm64 \
+    MACAUTOSETUP_TEST_CHOICES='workstation|no|no|no|no|no|yes' MACAUTOSETUP_NO_GUM_DOWNLOAD=1 \
+    MACAUTOSETUP_INSTALLER_PRINT_ARGS=1 "$REPO_ROOT/bin/install" 2>&1)"
+  [[ "$mac_output" == *"Detected: macOS test / arm64"* ]] || fail "interactive installer did not describe the detected Mac"
+  [[ "$mac_output" == *"SETUP_ARGS --profile workstation --macos-defaults"* ]] || \
+    fail "recommended Mac selections did not map to stable setup arguments"
+  [[ "$mac_output" == *"▲ ADVANCED — Experimental macOS preferences"* ]] || \
+    fail "interactive installer does not explain experimental settings"
+
+  linux_output="$(MACAUTOSETUP_TEST_OS=linux MACAUTOSETUP_TEST_ARCH=x64 MACAUTOSETUP_TEST_DISTRO=ubuntu \
+    MACAUTOSETUP_TEST_CHOICES='yes|yes|no' MACAUTOSETUP_NO_GUM_DOWNLOAD=1 \
+    MACAUTOSETUP_INSTALLER_PRINT_ARGS=1 "$REPO_ROOT/bin/install" 2>&1)"
+  [[ "$linux_output" == *"SETUP_ARGS --profile server --with-aws --with-docker --no-shell-change"* ]] || \
+    fail "Linux interactive selections did not map to setup arguments"
+  [[ "$linux_output" == *"That group has root-equivalent control"* ]] || \
+    fail "interactive installer does not explain Docker's group side effect"
+
+  custom_output="$(MACAUTOSETUP_TEST_OS=macos MACAUTOSETUP_TEST_ARCH=x64 \
+    MACAUTOSETUP_TEST_CHOICES='custom|no|yes|no|no|no|no|yes' MACAUTOSETUP_NO_GUM_DOWNLOAD=1 \
+    MACAUTOSETUP_INSTALLER_PRINT_ARGS=1 "$REPO_ROOT/bin/setup" --interactive 2>&1)"
+  [[ "$custom_output" == *"SETUP_ARGS --profile server --macos-defaults"* ]] || \
+    fail "custom Mac safe-preference selection was not preserved"
+  pass "descriptive interactive installer selection mapping"
 }
 
 release_asset() {
@@ -111,6 +155,8 @@ release_asset() {
     "$REPO_ROOT/bootstrap" > "$asset"
   bash -n "$asset"
   ! grep -q '__RELEASE_' "$asset" || fail "release bootstrap still contains placeholders"
+  grep -q 'bin/install' "$asset" || fail "release bootstrap does not route terminal users to the guided installer"
+  grep -q -- '--non-interactive' "$asset" || fail "release bootstrap does not preserve an explicit automation path"
   pass "release bootstrap rendering"
 }
 
@@ -129,6 +175,8 @@ dotfile_lifecycle() {
   HOME="$test_home" "$REPO_ROOT/bin/setup" --dotfiles-only --skip-plugins --no-shell-change --no-verify >/dev/null
   second_count="$(wc -l < "$backup_list" | tr -d ' ')"
   [ "$first_count" = "$second_count" ] || fail "idempotent rerun created a spurious backup"
+  find "$test_home/.local/state/macautosetup/logs" -type f -name '*.log' | grep -q . || \
+    fail "setup did not retain a detailed installation log"
 
   if command -v zsh >/dev/null 2>&1; then
     zsh_output="$(env HOME="$test_home" ZDOTDIR="$test_home" TERM=xterm-256color zsh -dfc 'source ~/.zshrc' 2>&1)"
@@ -143,6 +191,7 @@ dotfile_lifecycle() {
 
 syntax_checks
 dry_run_matrix
+interactive_installer
 macos_settings_safety
 release_asset
 dotfile_lifecycle
