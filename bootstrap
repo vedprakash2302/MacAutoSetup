@@ -92,7 +92,7 @@ checkout_repo() {
   fi
 
   if [ ! -d "$INSTALL_ROOT/.git" ]; then
-    log "Cloning MacAutoSetup into $INSTALL_ROOT"
+    log "Cloning Vedup into $INSTALL_ROOT"
     mkdir -p "$(dirname "$INSTALL_ROOT")"
     git clone "$REPOSITORY_URL" "$INSTALL_ROOT"
   fi
@@ -115,11 +115,11 @@ checkout_repo() {
 }
 
 main() {
-  printf '%b%bMacAutoSetup%b  %bFresh-machine bootstrap%b\n\n' \
+  printf '%b%bVedup%b  %bFresh-machine bootstrap%b\n\n' \
     "$BOOT_BOLD" "$BOOT_PINK" "$BOOT_RESET" "$BOOT_PURPLE" "$BOOT_RESET"
   log "[1/3] Checking prerequisites for $(detect_os)"
   ensure_git
-  log "[2/3] Loading the tested MacAutoSetup release"
+  log "[2/3] Loading the tested Vedup release"
   checkout_repo
   log "[3/3] Starting the installer"
   if [ "${1:-}" = --interactive ]; then

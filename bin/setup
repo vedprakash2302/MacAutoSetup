@@ -35,7 +35,7 @@ Usage: bin/setup [options]
   --with-personal-apps       Install optional macOS applications
   --dry-run                  Print actions without changing the machine
   --verbose                  Stream full command output as well as logging it
-  --interactive              Open the descriptive guided installer
+  --interactive              Open the friendly guided installer
   --non-interactive          Explicitly use flags without prompting
   --macos-defaults           Apply conservative macOS preferences
   --no-macos-defaults        Do not apply tracked macOS preferences
@@ -244,7 +244,7 @@ change_login_shell() {
   if [ "$DRY_RUN" = 1 ]; then
     printf '[dry-run] chsh -s %q %q\n' "$zsh_path" "$USER"
   else
-    chsh -s "$zsh_path" "$USER" || warn "Could not change the login shell; run: chsh -s $zsh_path"
+    sudo_run chsh -s "$zsh_path" "$USER" || warn "Could not change the login shell; run: chsh -s $zsh_path"
   fi
 }
 
@@ -306,6 +306,9 @@ main() {
   fi
   if [ "$VERIFY" = 1 ] && [ "$DRY_RUN" != 1 ]; then PROGRESS_TOTAL=$((PROGRESS_TOTAL + 1)); fi
 
+  if [ "$DRY_RUN" != 1 ] && { [ "$DOTFILES_ONLY" != 1 ] || [ "$CHANGE_SHELL" = 1 ]; }; then
+    sudo_acquire
+  fi
   progress_init
   trap 'progress_failed "$?" "$LINENO"' ERR
   progress_header "$OS/$DISTRO $DISTRO_VERSION on $ARCH" "$PROFILE"
@@ -383,6 +386,7 @@ main() {
   fi
   trap - ERR
   progress_finish
+  sudo_release
 }
 
 if [ "${BASH_SOURCE[0]}" = "$0" ]; then

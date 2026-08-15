@@ -22,11 +22,44 @@ die() {
 }
 has() { command -v "$1" >/dev/null 2>&1; }
 
+sudo_release() {
+  [ -n "${SUDO_KEEPALIVE_PID:-}" ] || return 0
+  kill "$SUDO_KEEPALIVE_PID" 2>/dev/null || true
+  wait "$SUDO_KEEPALIVE_PID" 2>/dev/null || true
+  SUDO_KEEPALIVE_PID=""
+}
+
+sudo_acquire() {
+  SUDO_KEEPALIVE_PID=""
+  [ "${DRY_RUN:-0}" != 1 ] || return 0
+  [ "$(id -u)" -ne 0 ] || return 0
+  has sudo || die "Administrator access is required, but sudo is not installed."
+
+  printf '\n%bAdministrator approval%b\n' "$SETUP_BOLD" "$SETUP_RESET"
+  printf 'Vedup asks once before installation and keeps this temporary approval active.\n'
+  printf 'Your password is handled by sudo and is never read or stored by Vedup.\n\n'
+  sudo -v || die "Administrator approval was not granted."
+  printf '%b✓%b Administrator approval ready.\n' "$SETUP_GREEN" "$SETUP_RESET"
+
+  (
+    trap - ERR
+    set +e
+    while :; do
+      sleep 50
+      sudo -n -v >/dev/null 2>&1 || exit 0
+    done
+  ) &
+  SUDO_KEEPALIVE_PID=$!
+  trap sudo_release EXIT
+}
+
 progress_init() {
   local terminal_columns
   PROGRESS_CURRENT=0
   PROGRESS_COMPACT=0
   PROGRESS_DASHBOARD_DRAWN=0
+  PROGRESS_DASHBOARD_ROWS=9
+  PROGRESS_ACTIVITY_PID=""
   PROGRESS_FD=1
   PROGRESS_COLUMNS=80
   terminal_columns="$(tput cols 2>/dev/null || true)"
@@ -50,7 +83,7 @@ progress_init() {
 }
 
 progress_header() {
-  printf '%bMacAutoSetup%b\n' "$SETUP_BOLD" "$SETUP_RESET" >&"$PROGRESS_FD"
+  printf '%bVedup%b\n' "$SETUP_BOLD" "$SETUP_RESET" >&"$PROGRESS_FD"
   printf 'Machine: %s\nProfile: %s\n' "$1" "$2" >&"$PROGRESS_FD"
   if [ "$PROGRESS_COMPACT" = 1 ]; then
     printf '%bConcise view:%b full output is being saved to %s\n' \
@@ -58,8 +91,47 @@ progress_header() {
   fi
 }
 
+progress_stop_activity() {
+  [ -n "${PROGRESS_ACTIVITY_PID:-}" ] || return 0
+  kill "$PROGRESS_ACTIVITY_PID" 2>/dev/null || true
+  wait "$PROGRESS_ACTIVITY_PID" 2>/dev/null || true
+  PROGRESS_ACTIVITY_PID=""
+}
+
+progress_start_activity() {
+  [ "$PROGRESS_COMPACT" = 1 ] || return 0
+  (
+    local elapsed frame=0 line limit index
+    local frames=('◐' '◓' '◑' '◒')
+    trap - ERR
+    set +e
+    while :; do
+      elapsed=$(($(date +%s) - PROGRESS_STAGE_STARTED))
+      printf '\0337\033[6A' >&3
+      printf '\r\033[2K  %b%s Working · %ss%b\n' "$SETUP_CYAN" "${frames[$frame]}" "$elapsed" "$SETUP_RESET" >&3
+      index=0
+      limit=$((PROGRESS_COLUMNS - 6))
+      [ "$limit" -ge 12 ] || limit=12
+      while IFS= read -r line && [ "$index" -lt 5 ]; do
+        if [ "${#line}" -gt "$limit" ]; then line="${line:0:$((limit - 3))}..."; fi
+        printf '\r\033[2K  %b│%b %s\n' "$SETUP_DIM" "$SETUP_RESET" "$line" >&3
+        index=$((index + 1))
+      done < <(tail -n 5 "$SETUP_LOG_FILE" 2>/dev/null | awk '{ gsub(sprintf("%c", 27) "\\[[0-9;?]*[ -/]*[@-~]", ""); gsub(/\r/, ""); print }')
+      while [ "$index" -lt 5 ]; do
+        printf '\r\033[2K  %b│%b\n' "$SETUP_DIM" "$SETUP_RESET" >&3
+        index=$((index + 1))
+      done
+      printf '\0338' >&3
+      frame=$(((frame + 1) % ${#frames[@]}))
+      sleep "${MACAUTOSETUP_ACTIVITY_INTERVAL:-0.5}"
+    done
+  ) &
+  PROGRESS_ACTIVITY_PID=$!
+}
+
 progress_begin() {
   local stage_name="$1" description="${2:-}" limit
+  progress_stop_activity
   PROGRESS_CURRENT=$((PROGRESS_CURRENT + 1))
   PROGRESS_STAGE_NAME="$stage_name"
   PROGRESS_STAGE_STARTED="$(date +%s)"
@@ -71,8 +143,9 @@ progress_begin() {
     [ "$limit" -ge 16 ] || limit=16
     if [ "${#description}" -gt "$limit" ]; then description="${description:0:$((limit - 3))}..."; fi
   fi
+  PROGRESS_DISPLAY_STAGE="$stage_name"
   if [ "$PROGRESS_COMPACT" = 1 ] && [ "$PROGRESS_DASHBOARD_DRAWN" = 1 ]; then
-    printf '\033[3A' >&3
+    printf '\033[%sA' "$PROGRESS_DASHBOARD_ROWS" >&3
   elif [ "$PROGRESS_COMPACT" != 1 ]; then
     printf '\n' >&"$PROGRESS_FD"
   fi
@@ -84,7 +157,15 @@ progress_begin() {
   [ "$PROGRESS_COMPACT" != 1 ] || printf '\r\033[2K' >&3
   if [ -n "$description" ]; then printf '  %b%s%b\n' "$SETUP_DIM" "$description" "$SETUP_RESET" >&"$PROGRESS_FD"
   else printf '\n' >&"$PROGRESS_FD"; fi
+  if [ "$PROGRESS_COMPACT" = 1 ]; then
+    printf '  %b◐ Working · 0s%b\n' "$SETUP_CYAN" "$SETUP_RESET" >&3
+    printf '  %b│%b\n  %b│%b\n  %b│%b\n  %b│%b\n  %b│%b\n' \
+      "$SETUP_DIM" "$SETUP_RESET" "$SETUP_DIM" "$SETUP_RESET" \
+      "$SETUP_DIM" "$SETUP_RESET" "$SETUP_DIM" "$SETUP_RESET" \
+      "$SETUP_DIM" "$SETUP_RESET" >&3
+  fi
   PROGRESS_DASHBOARD_DRAWN=1
+  progress_start_activity
 }
 
 progress_bar() {
@@ -105,8 +186,16 @@ progress_bar() {
 
 progress_done() {
   local elapsed
+  progress_stop_activity
   elapsed=$(($(date +%s) - PROGRESS_STAGE_STARTED))
-  [ "$PROGRESS_COMPACT" != 1 ] || printf '\033[1A\r\033[2K' >&3
+  if [ "$PROGRESS_COMPACT" = 1 ]; then
+    printf '\033[%sA' "$PROGRESS_DASHBOARD_ROWS" >&3
+    printf '\r\033[2K' >&3
+    progress_bar
+    printf '\r\033[2K%b◆%b [%s/%s] %b%s%b\n' "$SETUP_CYAN" "$SETUP_RESET" \
+      "$PROGRESS_CURRENT" "$PROGRESS_TOTAL" "$SETUP_BOLD" "$PROGRESS_DISPLAY_STAGE" "$SETUP_RESET" >&3
+    printf '\r\033[2K' >&3
+  fi
   if [ "${DRY_RUN:-0}" = 1 ]; then
     printf '  %b✓%b Previewed %b(%ss)%b\n' "$SETUP_GREEN" "$SETUP_RESET" "$SETUP_DIM" "$elapsed" "$SETUP_RESET" \
       >&"$PROGRESS_FD"
@@ -114,13 +203,21 @@ progress_done() {
     printf '  %b✓%b Complete %b(%ss)%b\n' "$SETUP_GREEN" "$SETUP_RESET" "$SETUP_DIM" "$elapsed" "$SETUP_RESET" \
       >&"$PROGRESS_FD"
   fi
+  if [ "$PROGRESS_COMPACT" = 1 ]; then
+    printf '\r\033[2K\n\r\033[2K\n\r\033[2K\n\r\033[2K\n\r\033[2K\n\r\033[2K\n' >&3
+  fi
 }
 
 progress_restore_terminal() {
   [ "${PROGRESS_COMPACT:-0}" = 1 ] || return 0
+  progress_stop_activity
   if [ "${PROGRESS_DASHBOARD_DRAWN:-0}" = 1 ]; then
-    printf '\033[3A' >&3
-    printf '\r\033[2K\n\r\033[2K\n\r\033[2K\n' >&3
+    printf '\033[%sA' "$PROGRESS_DASHBOARD_ROWS" >&3
+    local row=0
+    while [ "$row" -lt "$PROGRESS_DASHBOARD_ROWS" ]; do
+      printf '\r\033[2K\n' >&3
+      row=$((row + 1))
+    done
   fi
   exec 1>&3 2>&3
   PROGRESS_COMPACT=0
@@ -194,7 +291,7 @@ sudo_run() {
   if [ "$(id -u)" -eq 0 ]; then
     run "$@"
   elif has sudo; then
-    run sudo "$@"
+    run sudo -n "$@"
   else
     die "Administrator access is required for: $*"
   fi

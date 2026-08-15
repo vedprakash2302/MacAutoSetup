@@ -12,7 +12,7 @@ case "$#:${1:-}" in
   *) printf 'Usage: bin/uninstall [--restore-backup]\n' >&2; exit 2 ;;
 esac
 
-[ -r "$STATE_FILE" ] || { printf 'No MacAutoSetup installation state was found.\n' >&2; exit 1; }
+[ -r "$STATE_FILE" ] || { printf 'No Vedup installation state was found.\n' >&2; exit 1; }
 # shellcheck disable=SC1090
 . "$STATE_FILE"
 
@@ -43,4 +43,4 @@ if [ "$RESTORE" = 1 ] && [ -r "$BACKUP_LIST" ]; then
 fi
 
 rm -f "$STATE_FILE"
-printf 'MacAutoSetup dotfile links were removed. Installed packages were left untouched.\n'
+printf 'Vedup dotfile links were removed. Installed packages were left untouched.\n'

@@ -147,6 +147,11 @@ interactive_installer() {
     MACAUTOSETUP_INSTALLER_PRINT_ARGS=1 "$REPO_ROOT/bin/install" 2>&1)"
   [[ "$linux_output" == *"SETUP_ARGS --profile server --with-aws --with-docker --no-shell-change"* ]] || \
     fail "Linux interactive selections did not map to setup arguments"
+  [[ "$linux_output" == *"Vedup"* && "$linux_output" == *"Nice to meet you! Let's set your machine up!"* ]] || \
+    fail "interactive installer does not show the Vedup welcome"
+  [[ "$linux_output" == *"Administrator approval"* && "$linux_output" == *"one visible prompt before setup"* ]] || \
+    fail "interactive installer does not disclose its sudo approval flow"
+  [[ "$linux_output" == *"__     __"* ]] || fail "interactive installer does not show the Vedup ASCII art"
   [[ "$linux_output" == *"That group has root-equivalent control"* ]] || \
     fail "interactive installer does not explain Docker's group side effect"
 
@@ -160,23 +165,60 @@ interactive_installer() {
 
 concise_progress() {
   local concise_home="$TEST_ROOT/concise-home" verbose_home="$TEST_ROOT/verbose-home"
-  local concise_output verbose_output concise_log
-  mkdir -p "$concise_home" "$verbose_home"
+  local concise_output verbose_output concise_log activity_output activity_home="$TEST_ROOT/activity-home"
+  mkdir -p "$concise_home" "$verbose_home" "$activity_home"
 
   concise_output="$(HOME="$concise_home" TERM=xterm-256color MACAUTOSETUP_TEST_COMPACT=1 \
     "$REPO_ROOT/bin/setup" --dotfiles-only --skip-plugins --no-shell-change --no-verify 2>&1)"
   [[ "$concise_output" == *"Concise view: full output is being saved"* ]] || \
     fail "concise installation does not identify its detailed log"
-  [[ "$concise_output" != *"[setup] Linking zsh dotfiles"* ]] || \
-    fail "concise installation leaked command output into the dashboard"
+  [[ "$concise_output" == *"[setup] Linking zsh dotfiles"* ]] || \
+    fail "concise installation did not surface recent command activity"
   [[ "$concise_output" == *"Setup complete"* ]] || fail "concise installation did not show its completion summary"
   concise_log="$(find "$concise_home/.local/state/macautosetup/logs" -type f -name '*.log' -print -quit)"
   grep -q '\[setup\] Linking zsh dotfiles' "$concise_log" || fail "concise installation did not retain command output"
+
+  activity_output="$(HOME="$activity_home" TERM=xterm-256color MACAUTOSETUP_TEST_COMPACT=1 \
+    MACAUTOSETUP_ACTIVITY_INTERVAL=0.05 bash -c '
+      set -Eeuo pipefail
+      . "$1"
+      DRY_RUN=0 VERBOSE=0 PROGRESS_TOTAL=1 PROFILE=test
+      progress_init
+      progress_header "test machine" "$PROFILE"
+      progress_begin "Downloading a large package" "Show recent activity without scrolling."
+      printf "large-download-marker\\n"
+      sleep 0.2
+      progress_done
+      progress_finish
+    ' _ "$REPO_ROOT/lib/common.sh" 2>&1)"
+  [[ "$activity_output" == *"Working ·"* && "$activity_output" == *"large-download-marker"* ]] || \
+    fail "concise dashboard does not refresh recent command activity"
 
   verbose_output="$(HOME="$verbose_home" TERM=xterm-256color MACAUTOSETUP_TEST_COMPACT=1 \
     "$REPO_ROOT/bin/setup" --dotfiles-only --skip-plugins --no-shell-change --no-verify --verbose 2>&1)"
   [[ "$verbose_output" == *"[setup] Linking zsh dotfiles"* ]] || fail "--verbose did not stream command output"
   pass "fixed concise dashboard and verbose output override"
+}
+
+administrator_approval() {
+  local fake_bin="$TEST_ROOT/fake-sudo-bin" sudo_log="$TEST_ROOT/fake-sudo.log"
+  mkdir -p "$fake_bin"
+  # shellcheck disable=SC2016
+  printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >> "$MACAUTOSETUP_TEST_SUDO_LOG"\n' > "$fake_bin/sudo"
+  chmod +x "$fake_bin/sudo"
+
+  PATH="$fake_bin:$PATH" MACAUTOSETUP_TEST_SUDO_LOG="$sudo_log" bash -c '
+    set -Eeuo pipefail
+    . "$1"
+    DRY_RUN=0
+    sudo_acquire
+    sudo_run /usr/bin/true
+    sudo_release
+  ' _ "$REPO_ROOT/lib/common.sh" >/dev/null
+
+  grep -Fxq -- '-v' "$sudo_log" || fail "setup did not acquire sudo before output capture"
+  grep -Fxq -- '-n /usr/bin/true' "$sudo_log" || fail "privileged commands can still open a hidden prompt"
+  pass "single visible administrator approval and non-interactive sudo"
 }
 
 release_asset() {
@@ -210,7 +252,7 @@ dotfile_lifecycle() {
     fail "setup did not retain a detailed installation log"
 
   if command -v zsh >/dev/null 2>&1; then
-    zsh_output="$(env HOME="$test_home" ZDOTDIR="$test_home" TERM=xterm-256color zsh -dfc 'source ~/.zshrc' 2>&1)"
+    zsh_output="$(env HOME="$test_home" ZDOTDIR="$test_home" TERM=xterm-256color zsh -dfc 'cd; source ~/.zshrc' 2>&1)"
     [ -z "$zsh_output" ] || fail "Zsh startup produced output: $zsh_output"
   fi
 
@@ -224,6 +266,7 @@ syntax_checks
 dry_run_matrix
 interactive_installer
 concise_progress
+administrator_approval
 macos_settings_safety
 release_asset
 dotfile_lifecycle
