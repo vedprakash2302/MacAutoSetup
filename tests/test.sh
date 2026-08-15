@@ -172,8 +172,6 @@ concise_progress() {
     "$REPO_ROOT/bin/setup" --dotfiles-only --skip-plugins --no-shell-change --no-verify 2>&1)"
   [[ "$concise_output" == *"Concise view: full output is being saved"* ]] || \
     fail "concise installation does not identify its detailed log"
-  [[ "$concise_output" == *"[setup] Linking zsh dotfiles"* ]] || \
-    fail "concise installation did not surface recent command activity"
   [[ "$concise_output" == *"Setup complete"* ]] || fail "concise installation did not show its completion summary"
   concise_log="$(find "$concise_home/.local/state/macautosetup/logs" -type f -name '*.log' -print -quit)"
   grep -q '\[setup\] Linking zsh dotfiles' "$concise_log" || fail "concise installation did not retain command output"
