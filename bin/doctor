@@ -3,6 +3,8 @@
 set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck disable=SC1091
+. "$REPO_ROOT/versions.env"
 export PATH="$HOME/.local/bin:$HOME/.local/share/mise/shims:$PATH"
 export MISE_CONFIG_FILE="$REPO_ROOT/mise.toml"
 failures=0
@@ -11,7 +13,7 @@ STATE_FILE="${XDG_STATE_HOME:-$HOME/.local/state}/macautosetup/install.env"
 ok() { printf '[doctor] OK: %s\n' "$*"; }
 fail() { printf '[doctor] FAIL: %s\n' "$*" >&2; failures=$((failures + 1)); }
 
-for command_name in git zsh tmux stow mise node python nvim starship zoxide rg fd bat fzf jq yq delta lazygit btop gh tree-sitter tldr; do
+for command_name in git zsh tmux stow mise node python nvim starship zoxide rg fd bat fzf eza carapace jq yq delta lazygit btop gh tree-sitter tldr; do
   if command -v "$command_name" >/dev/null 2>&1; then ok "$command_name is available"
   else fail "$command_name is missing"; fi
 done
@@ -26,10 +28,57 @@ if command -v nvim >/dev/null 2>&1; then
 fi
 
 if [ -r "$HOME/.zshrc" ] && command -v zsh >/dev/null 2>&1; then
-  doctor_term=xterm-256color
-  zsh_output="$(env HOME="$HOME" ZDOTDIR="$HOME" TERM="$doctor_term" zsh -dfc 'source ~/.zshrc' 2>&1)"
-  if [ -z "$zsh_output" ]; then ok "Zsh configuration starts without output"
-  else fail "Zsh startup produced output: $zsh_output"; fi
+  zsh_plugin_root="${XDG_DATA_HOME:-$HOME/.local/share}/vedup/zsh/plugins"
+  zsh_cache_root="${XDG_CACHE_HOME:-$HOME/.cache}/vedup/zsh"
+  plugin_failures=0
+  while IFS=: read -r plugin_name expected_commit; do
+    plugin_path="$zsh_plugin_root/$plugin_name"
+    if [ -d "$plugin_path/.git" ] && [ "$(git -C "$plugin_path" rev-parse HEAD 2>/dev/null)" = "$expected_commit" ]; then
+      ok "$plugin_name is pinned"
+    else
+      fail "$plugin_name is missing or not at its pinned revision"
+      plugin_failures=$((plugin_failures + 1))
+    fi
+  done <<EOF
+zsh-autosuggestions:$ZSH_AUTOSUGGESTIONS_COMMIT
+zsh-syntax-highlighting:$ZSH_SYNTAX_HIGHLIGHTING_COMMIT
+zsh-history-substring-search:$ZSH_HISTORY_SUBSTRING_SEARCH_COMMIT
+zsh-completions:$ZSH_COMPLETIONS_COMMIT
+zsh-you-should-use:$ZSH_YOU_SHOULD_USE_COMMIT
+git-alias:$ZSH_GIT_ALIAS_COMMIT
+EOF
+
+  # shellcheck disable=SC2016
+  if [ "$plugin_failures" -eq 0 ] && env TERM=xterm-256color VEDUP_ZSH_PLUGIN_ROOT="$zsh_plugin_root" \
+    zsh -dfic 'source "$1"; (( $+functions[_zsh_autosuggest_start] && $+functions[_zsh_highlight] && $+widgets[history-substring-search-up] && $+aliases[ga] && $+functions[check_alias_usage] ))' \
+      _ "$HOME/.zshrc" >/dev/null 2>&1; then
+    ok "The complete Zsh configuration and interactive plugins load"
+  elif [ "$plugin_failures" -eq 0 ]; then
+    fail "Zsh plugins are installed but their interactive features do not load"
+  fi
+
+  if [ -r "$HOME/.zsh.d/completions.sh" ]; then
+    # shellcheck disable=SC2016
+    insecure_completion_dirs="$(env VEDUP_ZSH_PLUGIN_ROOT="$zsh_plugin_root" zsh -dfc \
+      'source "$1"; autoload -Uz compaudit; compaudit' _ "$HOME/.zsh.d/completions.sh" 2>/dev/null || true)"
+  else
+    insecure_completion_dirs="missing:$HOME/.zsh.d/completions.sh"
+  fi
+  if [ -z "$insecure_completion_dirs" ]; then
+    ok "Zsh completion directories pass the security audit"
+  else
+    fail "Zsh has insecure completion directories: $(printf '%s' "$insecure_completion_dirs" | tr '\n' ' ')"
+  fi
+
+  for integration_name in mise zoxide fzf carapace starship; do
+    integration_cache="$zsh_cache_root/init/$integration_name.zsh"
+    if command -v "$integration_name" >/dev/null 2>&1 && \
+      [ -s "$integration_cache" ] && zsh -n "$integration_cache" >/dev/null 2>&1; then
+      ok "$integration_name Zsh initialization is cached and valid"
+    elif command -v "$integration_name" >/dev/null 2>&1; then
+      fail "$integration_name Zsh initialization cache is missing or invalid"
+    fi
+  done
 fi
 
 if [ -r "$STATE_FILE" ]; then
@@ -42,6 +91,10 @@ if [ -r "$STATE_FILE" ]; then
   if [ "${WITH_DOCKER:-0}" = 1 ]; then
     if command -v docker >/dev/null 2>&1; then ok "optional Docker CLI is available"; else fail "optional Docker CLI is missing"; fi
     if command -v lazydocker >/dev/null 2>&1; then ok "optional lazydocker is available"; else fail "optional lazydocker is missing"; fi
+  fi
+  if [ "${OS:-}" = macos ] && [ "${PROFILE:-}" = workstation ]; then
+    if command -v borders >/dev/null 2>&1; then ok "macOS window borders are available"
+    else fail "macOS window borders are missing"; fi
   fi
 else
   fail "installation state is missing"

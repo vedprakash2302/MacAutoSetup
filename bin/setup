@@ -24,6 +24,7 @@ MINIMAL_DOCK=0
 KEYBOARD_SHORTCUTS=0
 EXPERIMENTAL_MACOS_DEFAULTS=0
 VERBOSE=0
+PARALLEL_JOBS="${VEDUP_JOBS:-4}"
 
 usage() {
   cat <<'EOF'
@@ -35,6 +36,7 @@ Usage: bin/setup [options]
   --with-personal-apps       Install optional macOS applications
   --dry-run                  Print actions without changing the machine
   --verbose                  Stream full command output as well as logging it
+  --jobs NUMBER              Run up to NUMBER safe installation jobs (default: 4)
   --interactive              Open the friendly guided installer
   --non-interactive          Explicitly use flags without prompting
   --macos-defaults           Apply conservative macOS preferences
@@ -58,6 +60,7 @@ while [ "$#" -gt 0 ]; do
     --with-personal-apps) WITH_PERSONAL_APPS=1; shift ;;
     --dry-run) DRY_RUN=1; shift ;;
     --verbose) VERBOSE=1; shift ;;
+    --jobs) [ "$#" -ge 2 ] || die "--jobs requires a value"; PARALLEL_JOBS="$2"; shift 2 ;;
     --interactive) shift; exec "$REPO_ROOT/bin/install" "$@" ;;
     --non-interactive) shift ;;
     --macos-defaults) APPLY_MACOS_DEFAULTS=1; shift ;;
@@ -73,6 +76,13 @@ while [ "$#" -gt 0 ]; do
     *) die "Unknown option: $1" ;;
   esac
 done
+
+case "$PARALLEL_JOBS" in
+  ''|*[!0-9]*) die "--jobs must be a number from 1 to 8" ;;
+esac
+if [ "$PARALLEL_JOBS" -lt 1 ] || [ "$PARALLEL_JOBS" -gt 8 ]; then
+  die "--jobs must be a number from 1 to 8"
+fi
 
 detect_platform() {
   OS="${MACAUTOSETUP_TEST_OS:-}"
@@ -159,7 +169,7 @@ install_mise() {
 }
 
 install_mise_tools() {
-  local tools=(node python aqua:neovim/neovim starship zoxide ripgrep bat fzf jq yq lazygit gh tree-sitter)
+  local tools=(node python aqua:neovim/neovim starship zoxide ripgrep bat fzf carapace jq yq lazygit gh tree-sitter)
   if [ "$OS/$ARCH" != linux/arm64 ]; then tools+=(tlrc); fi
   if [ "$OS" = linux ]; then
     tools+=(fd delta btop)
@@ -178,6 +188,145 @@ install_mise_tools() {
   MISE_CONFIG_FILE="$REPO_ROOT/mise.toml" mise install --locked "${tools[@]}"
 }
 
+install_eza_linux() {
+  [ "$OS" = linux ] || return 0
+  if has eza && eza --version 2>/dev/null | grep -q "v${EZA_VERSION}"; then return 0; fi
+  local asset expected build_dir archive
+  case "$ARCH" in
+    x64)
+      asset="eza_x86_64-unknown-linux-musl.tar.gz"
+      expected="$EZA_SHA_LINUX_X64"
+      ;;
+    arm64)
+      asset="eza_aarch64-unknown-linux-gnu.tar.gz"
+      expected="$EZA_SHA_LINUX_ARM64"
+      ;;
+  esac
+  build_dir="$(mktemp -d)"
+  archive="$build_dir/$asset"
+  download_verified "https://github.com/eza-community/eza/releases/download/v${EZA_VERSION}/$asset" \
+    "$expected" "$archive"
+  [ "$DRY_RUN" != 1 ] || return 0
+  tar -xzf "$archive" -C "$build_dir"
+  run install -m 0755 "$build_dir/eza" "$HOME/.local/bin/eza"
+}
+
+preflight_git_checkout() {
+  local destination="$1"
+  if [ -e "$destination" ] && [ ! -d "$destination/.git" ]; then
+    die "$destination exists but is not a Git checkout. Move it aside and retry."
+  fi
+  if [ -d "$destination/.git" ] && [ -n "$(git -C "$destination" status --porcelain)" ]; then
+    die "$destination has local changes. Commit or discard them before upgrading."
+  fi
+}
+
+sync_git_checkout() {
+  local repository="$1" commit="$2" destination="$3" clone_tmp repository_url stale_tmp
+  case "$repository" in
+    *://*|/*) repository_url="$repository" ;;
+    *) repository_url="https://github.com/$repository.git" ;;
+  esac
+  if [ -d "$destination/.git" ] && \
+    [ "$(git -C "$destination" rev-parse HEAD 2>/dev/null || true)" = "$commit" ]; then
+    log "${repository##*/} is already pinned"
+    return 0
+  fi
+
+  if [ "$DRY_RUN" = 1 ]; then
+    printf '[dry-run] sync %s at %s -> %s\n' "$repository_url" "$commit" "$destination"
+    return 0
+  fi
+
+  if [ -d "$destination/.git" ]; then
+    if ! retry_command 3 2 git -C "$destination" fetch --quiet --depth 1 origin "$commit"; then
+      retry_command 3 2 git -C "$destination" fetch --quiet origin
+    fi
+    git -C "$destination" checkout --quiet --detach "$commit"
+    return 0
+  fi
+
+  clone_tmp="${destination}.vedup-tmp-$$-${RANDOM}"
+  for stale_tmp in "${destination}.vedup-tmp-"*; do
+    [ -e "$stale_tmp" ] || continue
+    rm -rf -- "$stale_tmp"
+  done
+  mkdir -p "$(dirname "$destination")"
+  if ! git init --quiet "$clone_tmp" || \
+    ! git -C "$clone_tmp" remote add origin "$repository_url"; then
+    rm -rf -- "$clone_tmp"
+    return 1
+  fi
+  if ! retry_command 3 2 git -C "$clone_tmp" fetch --quiet --depth 1 origin "$commit"; then
+    if ! retry_command 3 2 git -C "$clone_tmp" fetch --quiet origin; then
+      rm -rf -- "$clone_tmp"
+      return 1
+    fi
+  fi
+  if ! git -C "$clone_tmp" checkout --quiet --detach "$commit" || \
+    ! mv -- "$clone_tmp" "$destination"; then
+    rm -rf -- "$clone_tmp"
+    return 1
+  fi
+}
+
+sync_plugin_checkouts() {
+  local max_jobs="$1" spec repository_and_commit repository commit destination
+  local start=0 batch_count index failed pid
+  local -a specs pids names
+  shift
+  specs=("$@")
+
+  for spec in "${specs[@]}"; do
+    destination="${spec##*|}"
+    preflight_git_checkout "$destination"
+  done
+
+  if [ "$DRY_RUN" = 1 ] || [ "$max_jobs" -le 1 ]; then
+    for spec in "${specs[@]}"; do
+      repository_and_commit="${spec%%|*}"
+      destination="${spec##*|}"
+      repository="${repository_and_commit%%:*}"
+      commit="${repository_and_commit#*:}"
+      sync_git_checkout "$repository" "$commit" "$destination"
+    done
+    return 0
+  fi
+
+  while [ "$start" -lt "${#specs[@]}" ]; do
+    pids=()
+    names=()
+    batch_count=0
+    while [ "$batch_count" -lt "$max_jobs" ] && [ "$start" -lt "${#specs[@]}" ]; do
+      spec="${specs[$start]}"
+      repository_and_commit="${spec%%|*}"
+      destination="${spec##*|}"
+      repository="${repository_and_commit%%:*}"
+      commit="${repository_and_commit#*:}"
+      (
+        trap - ERR EXIT INT TERM
+        set -Eeuo pipefail
+        sync_git_checkout "$repository" "$commit" "$destination"
+      ) &
+      pids+=("$!")
+      names+=("${repository##*/}")
+      start=$((start + 1))
+      batch_count=$((batch_count + 1))
+    done
+
+    failed=0
+    index=0
+    for pid in "${pids[@]}"; do
+      if ! wait "$pid"; then
+        warn "Plugin checkout failed: ${names[$index]}"
+        failed=1
+      fi
+      index=$((index + 1))
+    done
+    [ "$failed" -eq 0 ] || return 1
+  done
+}
+
 install_tlrc_linux_arm64() {
   [ "$OS/$ARCH" = linux/arm64 ] || return 0
   if has tldr && tldr --version 2>/dev/null | grep -q "$TLRC_VERSION"; then return 0; fi
@@ -191,41 +340,47 @@ install_tlrc_linux_arm64() {
   run install -m 0755 "$build_dir/tldr" "$HOME/.local/bin/tldr"
 }
 
-install_tmux_plugins() {
-  local tpm="$HOME/.tmux/plugins/tpm" spec repository commit name destination
-  local plugins=(
-    "christoomey/vim-tmux-navigator:$TMUX_NAVIGATOR_COMMIT"
-    "tmux-plugins/tmux-resurrect:$TMUX_RESURRECT_COMMIT"
-    "tmux-plugins/tmux-continuum:$TMUX_CONTINUUM_COMMIT"
-    "tmux-plugins/tmux-sensible:$TMUX_SENSIBLE_COMMIT"
-    "tmux-plugins/tmux-online-status:$TMUX_ONLINE_STATUS_COMMIT"
-    "tmux-plugins/tmux-battery:$TMUX_BATTERY_COMMIT"
-    "catppuccin/tmux:$TMUX_CATPPUCCIN_COMMIT"
-  )
-  if [ ! -d "$tpm/.git" ]; then
-    run mkdir -p "$(dirname "$tpm")"
-    run git clone https://github.com/tmux-plugins/tpm.git "$tpm"
-  fi
-  run git -C "$tpm" fetch --quiet origin
-  run git -C "$tpm" checkout --quiet --detach "$TPM_COMMIT"
+install_terminal_plugins() {
+  local zsh_root tmux_root plugin_jobs
+  zsh_root="${XDG_DATA_HOME:-$HOME/.local/share}/vedup/zsh/plugins"
+  tmux_root="$HOME/.tmux/plugins"
+  plugin_jobs="${PLUGIN_SYNC_JOBS:-$PARALLEL_JOBS}"
+  sync_plugin_checkouts "$plugin_jobs" \
+    "zsh-users/zsh-autosuggestions:$ZSH_AUTOSUGGESTIONS_COMMIT|$zsh_root/zsh-autosuggestions" \
+    "zsh-users/zsh-syntax-highlighting:$ZSH_SYNTAX_HIGHLIGHTING_COMMIT|$zsh_root/zsh-syntax-highlighting" \
+    "zsh-users/zsh-history-substring-search:$ZSH_HISTORY_SUBSTRING_SEARCH_COMMIT|$zsh_root/zsh-history-substring-search" \
+    "zsh-users/zsh-completions:$ZSH_COMPLETIONS_COMMIT|$zsh_root/zsh-completions" \
+    "MichaelAquilina/zsh-you-should-use:$ZSH_YOU_SHOULD_USE_COMMIT|$zsh_root/zsh-you-should-use" \
+    "chivalryq/git-alias:$ZSH_GIT_ALIAS_COMMIT|$zsh_root/git-alias" \
+    "tmux-plugins/tpm:$TPM_COMMIT|$tmux_root/tpm" \
+    "christoomey/vim-tmux-navigator:$TMUX_NAVIGATOR_COMMIT|$tmux_root/vim-tmux-navigator" \
+    "tmux-plugins/tmux-resurrect:$TMUX_RESURRECT_COMMIT|$tmux_root/tmux-resurrect" \
+    "tmux-plugins/tmux-continuum:$TMUX_CONTINUUM_COMMIT|$tmux_root/tmux-continuum" \
+    "tmux-plugins/tmux-sensible:$TMUX_SENSIBLE_COMMIT|$tmux_root/tmux-sensible" \
+    "tmux-plugins/tmux-online-status:$TMUX_ONLINE_STATUS_COMMIT|$tmux_root/tmux-online-status" \
+    "tmux-plugins/tmux-battery:$TMUX_BATTERY_COMMIT|$tmux_root/tmux-battery" \
+    "catppuccin/tmux:$TMUX_CATPPUCCIN_COMMIT|$tmux_root/tmux"
+}
 
-  for spec in "${plugins[@]}"; do
-    repository="${spec%%:*}"
-    commit="${spec#*:}"
-    name="${repository##*/}"
-    destination="$HOME/.tmux/plugins/$name"
-    if [ -e "$destination" ] && [ ! -d "$destination/.git" ]; then
-      die "$destination exists but is not a Git checkout. Move it aside and retry."
-    fi
-    if [ ! -d "$destination/.git" ]; then
-      run git clone "https://github.com/$repository.git" "$destination"
-    fi
-    if [ "$DRY_RUN" != 1 ] && [ -n "$(git -C "$destination" status --porcelain)" ]; then
-      die "$destination has local changes. Commit or discard them before upgrading."
-    fi
-    run git -C "$destination" fetch --quiet origin
-    run git -C "$destination" checkout --quiet --detach "$commit"
-  done
+install_platform_cli_artifacts() {
+  install_eza_linux
+  install_tlrc_linux_arm64
+}
+
+install_development_components() {
+  local plugin_jobs
+  local -a tasks
+  tasks=(
+    "Pinned development tools|install_mise_tools"
+    "Platform CLI artifacts|install_platform_cli_artifacts"
+  )
+  if [ "$SKIP_PLUGINS" != 1 ]; then
+    plugin_jobs=$((PARALLEL_JOBS - 2))
+    [ "$plugin_jobs" -ge 1 ] || plugin_jobs=1
+    PLUGIN_SYNC_JOBS="$plugin_jobs"
+    tasks+=("Pinned terminal plugins|install_terminal_plugins")
+  fi
+  run_parallel_tasks "$PARALLEL_JOBS" "${tasks[@]}"
 }
 
 install_cursor_extensions() {
@@ -233,6 +388,16 @@ install_cursor_extensions() {
   while IFS= read -r extension; do
     [ -n "$extension" ] && run cursor --install-extension "$extension" --force
   done < "$REPO_ROOT/profiles/macos/cursor-extensions.txt"
+}
+
+warm_zsh_startup_cache() {
+  if [ "$DRY_RUN" = 1 ]; then
+    printf '[dry-run] refresh Vedup Zsh startup cache\n'
+    return 0
+  fi
+  # shellcheck disable=SC2016
+  env VEDUP_ZSH_REFRESH_CACHE=1 TERM="${TERM:-xterm-256color}" \
+    zsh -dfic 'source "$1"' _ "$HOME/.zshrc" </dev/null >/dev/null
 }
 
 change_login_shell() {
@@ -306,6 +471,7 @@ main() {
   fi
   if [ "$VERIFY" = 1 ] && [ "$DRY_RUN" != 1 ]; then PROGRESS_TOTAL=$((PROGRESS_TOTAL + 1)); fi
 
+  setup_lock_acquire
   if [ "$DRY_RUN" != 1 ] && { [ "$DOTFILES_ONLY" != 1 ] || [ "$CHANGE_SHELL" = 1 ]; }; then
     sudo_acquire
   fi
@@ -326,9 +492,8 @@ main() {
     install_mise
     progress_done
 
-    progress_begin "Installing the development toolchain" "Install pinned Node, Python, Neovim, and cross-platform CLI tools."
-    install_mise_tools
-    install_tlrc_linux_arm64
+    progress_begin "Installing development components" "Install independent pinned tools, CLI artifacts, and terminal plugins with bounded concurrency."
+    install_development_components
     progress_done
 
     if [ "$PROFILE" = workstation ]; then
@@ -355,8 +520,8 @@ main() {
   progress_done
 
   if [ "$DOTFILES_ONLY" != 1 ]; then
-    progress_begin "Installing terminal and editor integrations" "Pin tmux plugins and synchronize Cursor extensions when Cursor is available."
-    if [ "$SKIP_PLUGINS" != 1 ]; then install_tmux_plugins; fi
+    progress_begin "Preparing terminal and editor integrations" "Prebuild the Zsh startup cache, then synchronize Cursor extensions when available."
+    warm_zsh_startup_cache
     if [ "$OS" = macos ]; then install_cursor_extensions; fi
     progress_done
   fi
@@ -387,6 +552,7 @@ main() {
   trap - ERR
   progress_finish
   sudo_release
+  setup_lock_release
 }
 
 if [ "${BASH_SOURCE[0]}" = "$0" ]; then

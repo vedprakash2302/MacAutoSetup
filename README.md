@@ -41,6 +41,9 @@ The bootstrap expects Bash, `curl`, outbound HTTPS, a supported package manager,
 # Stream all package-manager and command output during a real installation
 ~/.local/share/macautosetup/repo/bin/setup --verbose
 
+# Limit safe concurrent work (the default is four jobs; one disables parallelism)
+~/.local/share/macautosetup/repo/bin/setup --jobs 2
+
 # Install Docker on Linux and its terminal UI
 bash -c "$(curl -fsSL https://github.com/vedprakash2302/MacAutoSetup/releases/latest/download/bootstrap)" -- --with-docker
 
@@ -82,6 +85,8 @@ Every non-dry-run installation writes a detailed transcript to:
 
 If a stage fails, setup reports the stage, exit status, the last 18 log lines, the complete log location, and a safe rerun instruction. Successful completion prints recovery locations and the next action required to activate the configured shell.
 
+Vedup runs only independent tool downloads and pinned terminal-plugin checkouts concurrently. Package-manager transactions, App Store installs, preferences, dotfile linking, and verification remain ordered. Plugin downloads use bounded workers, retries, shallow pinned fetches, and atomic destinations, so an interrupted download cannot masquerade as a completed plugin. A per-user lock prevents two Vedup processes from modifying the same installation at once. Use `--jobs 1` when diagnosing a network or tool-specific problem.
+
 ## Author mode
 
 Stable installations use tested release tags. On a machine where you actively edit these dotfiles, install the `main` branch instead:
@@ -94,12 +99,14 @@ The managed checkout lives at `~/.local/share/macautosetup/repo`. Setup refuses 
 
 ## Profiles
 
-- **Core:** Git, Zsh, fzf, fd, ripgrep, bat, jq, yq, tmux, Stow, Starship, zoxide, btop, and `tldr` via tlrc.
+- **Core:** Git, Zsh, fzf, fd, ripgrep, bat, eza, Carapace, jq, yq, tmux, Stow, Starship, zoxide, btop, and `tldr` via tlrc.
 - **Development:** Mise-managed Node, Python, Neovim, Tree-sitter CLI, GitHub CLI, delta, and lazygit.
-- **Workstation:** Cursor, Ghostty, Raycast, Docker Desktop, Aerospace, ChatGPT, Zed, Dia, Google Chrome, Shottr, Jump Desktop, Hidden Bar, Logitech Options+, Bitwarden CLI, Amphetamine, Peek, and JetBrains Mono Nerd Font.
+- **Workstation:** Cursor, Ghostty, Raycast, Docker Desktop, Aerospace with JankyBorders, ChatGPT, Zed, Dia, Google Chrome, Shottr, Jump Desktop, Hidden Bar, Logitech Options+, Bitwarden CLI, Amphetamine, Peek, and JetBrains Mono Nerd Font.
 - **Server:** terminal-only configuration; Docker and AWS CLI are opt-in.
 
 Mise pins Node, Python, Neovim, and cross-platform CLI versions. Homebrew supplies the few tools without compatible macOS release assets. Direct bootstrap downloads are versioned and checksum-verified.
+Vedup also pins Zsh autosuggestions, syntax highlighting, community completions, history substring search, Git aliases, and zsh-you-should-use directly to Git commits. All `~/.zsh.d/*.sh` modules are loaded automatically; syntax highlighting remains last as required by its widget integration.
+Generated initialization for Mise, zoxide, fzf, Carapace, and Starship is syntax-checked, written atomically, and prewarmed during setup. Normal shells source these caches without spawning each tool. Zsh reuses its completion dump while repeating the complete directory security audit at least daily; `bin/doctor` verifies both the caches and the completion paths.
 LazyVim restores its committed plugin lock and language tooling the first time Neovim opens.
 Mac App Store installations require you to be signed into the App Store; Homebrew installs `mas` before those applications are requested.
 

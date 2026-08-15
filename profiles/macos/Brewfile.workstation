@@ -1,7 +1,9 @@
 tap "nikitabobko/tap", trusted: { cask: "aerospace" }
+tap "FelixKratz/formulae", trusted: { formula: "borders" }
 
 brew "bitwarden-cli"
 brew "mas"
+brew "FelixKratz/formulae/borders"
 
 cask "cursor"
 cask "ghostty"

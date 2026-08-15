@@ -22,6 +22,51 @@ die() {
 }
 has() { command -v "$1" >/dev/null 2>&1; }
 
+setup_lock_release() {
+  [ -n "${SETUP_LOCK_DIR:-}" ] || return 0
+  rm -f -- "$SETUP_LOCK_DIR/pid" 2>/dev/null || true
+  rmdir -- "$SETUP_LOCK_DIR" 2>/dev/null || true
+  SETUP_LOCK_DIR=""
+}
+
+setup_cleanup() {
+  local exit_code="$?"
+  trap - EXIT INT TERM
+  set +e
+  progress_stop_activity
+  sudo_release
+  setup_lock_release
+  return "$exit_code"
+}
+
+setup_lock_acquire() {
+  local state_dir existing_pid
+  [ "${DRY_RUN:-0}" != 1 ] || return 0
+  state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/macautosetup"
+  SETUP_LOCK_DIR="$state_dir/setup.lock"
+  mkdir -p "$state_dir"
+
+  if ! mkdir "$SETUP_LOCK_DIR" 2>/dev/null; then
+    existing_pid="$(sed -n '1p' "$SETUP_LOCK_DIR/pid" 2>/dev/null || true)"
+    case "$existing_pid" in
+      ''|*[!0-9]*) ;;
+      *)
+        if kill -0 "$existing_pid" 2>/dev/null; then
+          die "Another Vedup setup is already running for this account (PID $existing_pid)."
+        fi
+        ;;
+    esac
+    rm -f -- "$SETUP_LOCK_DIR/pid" 2>/dev/null || true
+    rmdir -- "$SETUP_LOCK_DIR" 2>/dev/null || \
+      die "Cannot recover stale setup lock: $SETUP_LOCK_DIR"
+    mkdir "$SETUP_LOCK_DIR" || die "Cannot acquire setup lock: $SETUP_LOCK_DIR"
+  fi
+
+  printf '%s\n' "$$" > "$SETUP_LOCK_DIR/pid"
+  trap setup_cleanup EXIT
+  trap 'exit 130' INT TERM
+}
+
 sudo_release() {
   [ -n "${SUDO_KEEPALIVE_PID:-}" ] || return 0
   kill "$SUDO_KEEPALIVE_PID" 2>/dev/null || true
@@ -55,7 +100,75 @@ sudo_acquire() {
     done
   ) &
   SUDO_KEEPALIVE_PID=$!
-  trap sudo_release EXIT
+  trap setup_cleanup EXIT
+}
+
+retry_command() {
+  local attempts="$1" delay_seconds="$2" attempt=1
+  shift 2
+  delay_seconds="${VEDUP_RETRY_DELAY:-$delay_seconds}"
+  while ! "$@"; do
+    if [ "$attempt" -ge "$attempts" ]; then return 1; fi
+    warn "Command failed (attempt $attempt/$attempts); retrying in ${delay_seconds}s: $*"
+    sleep "$delay_seconds"
+    attempt=$((attempt + 1))
+  done
+}
+
+# Run independent, no-argument shell functions in bounded batches. This avoids
+# wait -n so the implementation also works with the Bash 3.2 shipped by macOS.
+run_parallel_tasks() {
+  local max_jobs="$1" entry label task start=0 batch_count index pid failed task_status
+  local -a entries pids labels
+  shift
+  entries=("$@")
+
+  if [ "${DRY_RUN:-0}" = 1 ] || [ "$max_jobs" -le 1 ]; then
+    for entry in "${entries[@]}"; do
+      label="${entry%%|*}"
+      task="${entry#*|}"
+      log "$label"
+      "$task"
+    done
+    return 0
+  fi
+
+  while [ "$start" -lt "${#entries[@]}" ]; do
+    pids=()
+    labels=()
+    batch_count=0
+    while [ "$batch_count" -lt "$max_jobs" ] && [ "$start" -lt "${#entries[@]}" ]; do
+      entry="${entries[$start]}"
+      label="${entry%%|*}"
+      task="${entry#*|}"
+      (
+        trap - ERR EXIT INT TERM
+        set -Eeuo pipefail
+        log "$label started"
+        if "$task"; then
+          log "$label complete"
+        else
+          task_status="$?"
+          exit "$task_status"
+        fi
+      ) &
+      pids+=("$!")
+      labels+=("$label")
+      start=$((start + 1))
+      batch_count=$((batch_count + 1))
+    done
+
+    failed=0
+    index=0
+    for pid in "${pids[@]}"; do
+      if ! wait "$pid"; then
+        warn "${labels[$index]} failed"
+        failed=1
+      fi
+      index=$((index + 1))
+    done
+    [ "$failed" -eq 0 ] || return 1
+  done
 }
 
 progress_init() {

@@ -78,6 +78,30 @@ checksum = "sha256:5099054dd6a101bd12eb6ff3702a9a6a3f57aaa27923a0da478ae5b517faf
 url = "https://github.com/aristocratos/btop/releases/download/v1.4.7/btop-x86_64-unknown-linux-musl.tar.gz"
 url_api = "https://api.github.com/repos/aristocratos/btop/releases/assets/409963672"
 
+[[tools.carapace]]
+version = "1.7.3"
+backend = "aqua:carapace-sh/carapace-bin"
+
+[tools.carapace."platforms.linux-arm64"]
+checksum = "sha256:b2456cb09d77004db87de2567d6d7588a61ceb4724522c463e2b1c1f87b4d4b9"
+url = "https://github.com/carapace-sh/carapace-bin/releases/download/v1.7.3/carapace-bin_1.7.3_linux_arm64.tar.gz"
+url_api = "https://api.github.com/repos/carapace-sh/carapace-bin/releases/assets/462542274"
+
+[tools.carapace."platforms.linux-x64"]
+checksum = "sha256:35ab52bfe7bdd8296d90c3687660bde80497599badde840ab615d2f421f5f053"
+url = "https://github.com/carapace-sh/carapace-bin/releases/download/v1.7.3/carapace-bin_1.7.3_linux_amd64.tar.gz"
+url_api = "https://api.github.com/repos/carapace-sh/carapace-bin/releases/assets/462542251"
+
+[tools.carapace."platforms.macos-arm64"]
+checksum = "sha256:a7e79d8787ffc63c26568e8d8256d12df91f5cda0d9dc83d50e90b8567028a9d"
+url = "https://github.com/carapace-sh/carapace-bin/releases/download/v1.7.3/carapace-bin_1.7.3_darwin_arm64.tar.gz"
+url_api = "https://api.github.com/repos/carapace-sh/carapace-bin/releases/assets/462542252"
+
+[tools.carapace."platforms.macos-x64"]
+checksum = "sha256:23649b6a52bd68d00e8b88e95afadac09e9450fa49b49a95fcabd81b387de4b6"
+url = "https://github.com/carapace-sh/carapace-bin/releases/download/v1.7.3/carapace-bin_1.7.3_darwin_amd64.tar.gz"
+url_api = "https://api.github.com/repos/carapace-sh/carapace-bin/releases/assets/462542248"
+
 [[tools.delta]]
 version = "0.19.2"
 backend = "aqua:dandavison/delta"

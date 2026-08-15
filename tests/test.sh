@@ -53,8 +53,16 @@ PY
   fi
   pass "tmux plugin pins"
 
+  for pin in "$ZSH_AUTOSUGGESTIONS_COMMIT" "$ZSH_SYNTAX_HIGHLIGHTING_COMMIT" \
+    "$ZSH_HISTORY_SUBSTRING_SEARCH_COMMIT" "$ZSH_COMPLETIONS_COMMIT" \
+    "$ZSH_YOU_SHOULD_USE_COMMIT" "$ZSH_GIT_ALIAS_COMMIT"; do
+    [[ "$pin" =~ ^[0-9a-f]{40}$ ]] || fail "invalid Zsh plugin commit pin: $pin"
+  done
+  pass "Zsh plugin pins"
+
   for checksum in "$GUM_SHA_LINUX_X64" "$GUM_SHA_LINUX_ARM64" \
-    "$GUM_SHA_MACOS_X64" "$GUM_SHA_MACOS_ARM64"; do
+    "$GUM_SHA_MACOS_X64" "$GUM_SHA_MACOS_ARM64" \
+    "$EZA_SHA_LINUX_X64" "$EZA_SHA_LINUX_ARM64"; do
     [[ "$checksum" =~ ^[0-9a-f]{64}$ ]] || fail "invalid Gum checksum: $checksum"
   done
   pass "interactive UI binary pins"
@@ -65,6 +73,10 @@ PY
     fail "workstation bundle does not use the current Docker Desktop cask token"
   grep -Fq 'tap "jorgerojas26/lazysql", trusted: { formula: "lazysql" }' \
     "$REPO_ROOT/profiles/macos/Brewfile.optional" || fail "lazysql formula trust is not scoped declaratively"
+  grep -Fq 'tap "FelixKratz/formulae", trusted: { formula: "borders" }' \
+    "$REPO_ROOT/profiles/macos/Brewfile.workstation" || fail "Borders formula trust is not scoped declaratively"
+  grep -Fq 'brew "FelixKratz/formulae/borders"' "$REPO_ROOT/profiles/macos/Brewfile.workstation" || \
+    fail "macOS workstation does not install the Borders dependency used by Aerospace"
   pass "Homebrew cask names and scoped tap trust"
 }
 
@@ -112,9 +124,12 @@ dry_run_matrix() {
   mac_intel_output="$(HOME="$TEST_ROOT/mac-intel-routing" MACAUTOSETUP_TEST_OS=macos \
     MACAUTOSETUP_TEST_ARCH=x64 "$REPO_ROOT/bin/setup" --dry-run --no-shell-change --no-verify --skip-plugins 2>&1)"
   [[ "$mac_intel_output" == *"brew install fd git-delta"* ]] || fail "Intel macOS fallback tools are not routed through Homebrew"
+  [[ "$mac_intel_output" == *"brew install git stow tmux btop eza"* ]] || fail "macOS eza is not routed through Homebrew"
   linux_output="$(HOME="$TEST_ROOT/linux-routing" MACAUTOSETUP_TEST_OS=linux MACAUTOSETUP_TEST_DISTRO=ubuntu \
     MACAUTOSETUP_TEST_ARCH=x64 "$REPO_ROOT/bin/setup" --dry-run --no-shell-change --no-verify --skip-plugins 2>&1)"
   [[ "$linux_output" == *" btop"* ]] || fail "Linux btop is not routed through Mise"
+  [[ "$linux_output" == *" carapace"* && "$linux_output" == *"eza_x86_64-unknown-linux-musl.tar.gz"* ]] || \
+    fail "eza and Carapace are not installed cross-platform"
   progress_output="$(HOME="$TEST_ROOT/progress" MACAUTOSETUP_TEST_OS=linux MACAUTOSETUP_TEST_DISTRO=ubuntu \
     MACAUTOSETUP_TEST_ARCH=x64 "$REPO_ROOT/bin/setup" --profile server --with-docker --dry-run \
       --no-shell-change --no-verify --skip-plugins 2>&1)"
@@ -235,6 +250,173 @@ administrator_approval() {
   pass "single visible administrator approval and non-interactive sudo"
 }
 
+parallel_and_recovery() {
+  local parallel_root="$TEST_ROOT/parallel" index holder_pid source_repo source_commit checkout bad_checkout
+  mkdir -p "$parallel_root"
+  # shellcheck disable=SC1091
+  . "$REPO_ROOT/lib/common.sh"
+  DRY_RUN=0
+
+  parallel_task_a() {
+    : > "$parallel_root/a"
+    for index in {1..100}; do [ -e "$parallel_root/b" ] && return 0; sleep 0.01; done
+    return 1
+  }
+  parallel_task_b() {
+    : > "$parallel_root/b"
+    for index in {1..100}; do [ -e "$parallel_root/a" ] && return 0; sleep 0.01; done
+    return 1
+  }
+  parallel_task_fail() { return 7; }
+  run_parallel_tasks 2 "barrier A|parallel_task_a" "barrier B|parallel_task_b" >/dev/null || \
+    fail "independent setup tasks did not actually overlap"
+  if run_parallel_tasks 2 "expected failure|parallel_task_fail" "successful peer|parallel_task_a" >/dev/null 2>&1; then
+    fail "parallel task failure was not propagated"
+  fi
+
+  mkdir -p "$parallel_root/lock-home"
+  HOME="$parallel_root/lock-home" bash -c '
+    set -Eeuo pipefail
+    source "$1"
+    DRY_RUN=0
+    setup_lock_acquire
+    : > "$2"
+    while [ ! -e "$3" ]; do sleep 0.02; done
+  ' _ "$REPO_ROOT/lib/common.sh" "$parallel_root/lock-ready" "$parallel_root/lock-stop" &
+  holder_pid=$!
+  for index in {1..100}; do [ -e "$parallel_root/lock-ready" ] && break; sleep 0.01; done
+  [ -e "$parallel_root/lock-ready" ] || fail "setup lock holder did not start"
+  if HOME="$parallel_root/lock-home" bash -c '
+    set -Eeuo pipefail; source "$1"; DRY_RUN=0; setup_lock_acquire
+  ' _ "$REPO_ROOT/lib/common.sh" >/dev/null 2>&1; then
+    fail "a concurrent Vedup run acquired the same setup lock"
+  fi
+  : > "$parallel_root/lock-stop"
+  wait "$holder_pid"
+
+  mkdir -p "$parallel_root/lock-home/.local/state/macautosetup/setup.lock"
+  printf '99999999\n' > "$parallel_root/lock-home/.local/state/macautosetup/setup.lock/pid"
+  HOME="$parallel_root/lock-home" bash -c '
+    set -Eeuo pipefail; source "$1"; DRY_RUN=0; setup_lock_acquire; setup_lock_release
+  ' _ "$REPO_ROOT/lib/common.sh" || fail "stale setup lock was not recovered"
+
+  source_repo="$parallel_root/source.git"
+  checkout="$parallel_root/checkout"
+  bad_checkout="$parallel_root/bad-checkout"
+  git init --quiet "$source_repo"
+  git -C "$source_repo" config user.name Vedup-Test
+  git -C "$source_repo" config user.email vedup-test@example.invalid
+  printf 'pinned\n' > "$source_repo/plugin.zsh"
+  git -C "$source_repo" add plugin.zsh
+  git -C "$source_repo" commit --quiet -m pinned
+  source_commit="$(git -C "$source_repo" rev-parse HEAD)"
+  mkdir -p "$checkout.vedup-tmp-stale"
+  VEDUP_BENCH_REPO="$REPO_ROOT" VEDUP_RETRY_DELAY=0 bash -c '
+    set -Eeuo pipefail
+    source_url="$1"; source_revision="$2"; destination="$3"
+    setup_repo="$VEDUP_BENCH_REPO"; set --; source "$setup_repo/bin/setup"
+    DRY_RUN=0
+    sync_git_checkout "$source_url" "$source_revision" "$destination"
+  ' _ "file://$source_repo" "$source_commit" "$checkout"
+  [ "$(git -C "$checkout" rev-parse HEAD)" = "$source_commit" ] || fail "atomic plugin checkout used the wrong commit"
+  [ ! -e "$checkout.vedup-tmp-stale" ] || fail "stale interrupted plugin checkout was not cleaned"
+  mv "$source_repo" "$source_repo.offline"
+  VEDUP_BENCH_REPO="$REPO_ROOT" VEDUP_RETRY_DELAY=0 bash -c '
+    set -Eeuo pipefail
+    source_url="$1"; source_revision="$2"; destination="$3"
+    setup_repo="$VEDUP_BENCH_REPO"; set --; source "$setup_repo/bin/setup"
+    DRY_RUN=0
+    sync_git_checkout "$source_url" "$source_revision" "$destination"
+  ' _ "file://$source_repo" "$source_commit" "$checkout" || fail "pinned rerun unnecessarily required the network"
+  if VEDUP_BENCH_REPO="$REPO_ROOT" VEDUP_RETRY_DELAY=0 bash -c '
+    set -Eeuo pipefail
+    source_url="$1"; source_revision="$2"; destination="$3"
+    setup_repo="$VEDUP_BENCH_REPO"; set --; source "$setup_repo/bin/setup"
+    DRY_RUN=0
+    sync_git_checkout "$source_url" "$source_revision" "$destination"
+  ' _ "file://$source_repo" 0000000000000000000000000000000000000000 "$bad_checkout" >/dev/null 2>&1; then
+    fail "invalid plugin revision unexpectedly installed"
+  fi
+  [ ! -e "$bad_checkout" ] || fail "failed plugin checkout left a partial destination"
+  if compgen -G "$bad_checkout.vedup-tmp-*" >/dev/null; then fail "failed plugin checkout left temporary state"; fi
+  pass "bounded parallelism, setup locking, retries, and atomic plugin recovery"
+}
+
+zsh_features() {
+  local test_home="$TEST_ROOT/zsh-features" plugin_root fake_bin output second_output generator_log zsh_version
+  plugin_root="$test_home/share/vedup/zsh/plugins"
+  fake_bin="$test_home/bin"
+  generator_log="$test_home/generators.log"
+  zsh_version="$(zsh -fc 'print -r -- $ZSH_VERSION')"
+  mkdir -p "$test_home/.zsh.d" "$fake_bin" \
+    "$plugin_root/zsh-completions/src" "$plugin_root/git-alias" \
+    "$plugin_root/zsh-you-should-use" "$plugin_root/zsh-autosuggestions" \
+    "$plugin_root/zsh-history-substring-search" "$plugin_root/zsh-syntax-highlighting"
+  for module in "$REPO_ROOT"/dotfiles/zsh/.zsh.d/*.sh; do
+    ln -s "$module" "$test_home/.zsh.d/${module##*/}"
+  done
+  printf 'VEDUP_CUSTOM_MODULE=loaded\n' > "$test_home/.zsh.d/custom.sh"
+  printf 'VEDUP_LOCAL_MODULE=loaded\n' > "$test_home/.zshrc.local"
+  printf '#compdef vedup-test\n' > "$plugin_root/zsh-completions/src/_vedup-test"
+  printf "alias ga='git add'\n" > "$plugin_root/git-alias/git-alias.plugin.zsh"
+  printf 'check_alias_usage() { :; }\n' > "$plugin_root/zsh-you-should-use/you-should-use.plugin.zsh"
+  printf '_zsh_autosuggest_start() { :; }\n' > "$plugin_root/zsh-autosuggestions/zsh-autosuggestions.zsh"
+  printf '%s\n' 'history-substring-search-up() { :; }' 'history-substring-search-down() { :; }' \
+    'zle -N history-substring-search-up' 'zle -N history-substring-search-down' \
+    > "$plugin_root/zsh-history-substring-search/zsh-history-substring-search.zsh"
+  printf '_zsh_highlight() { :; }\nVEDUP_SYNTAX_LOADED=last\n' \
+    > "$plugin_root/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh"
+  # shellcheck disable=SC2016
+  printf '#!/usr/bin/env bash\nprintf "fzf\\n" >> "$VEDUP_FAKE_GENERATOR_LOG"\nprintf "VEDUP_FZF_LOADED=1\\n"\n' \
+    > "$fake_bin/fzf"
+  # shellcheck disable=SC2016
+  printf '#!/usr/bin/env bash\nprintf "carapace\\n" >> "$VEDUP_FAKE_GENERATOR_LOG"\nprintf "VEDUP_CARAPACE_LOADED=1\\n"\n' \
+    > "$fake_bin/carapace"
+  # shellcheck disable=SC2016
+  printf '#!/usr/bin/env bash\nprintf "mise\\n" >> "$VEDUP_FAKE_GENERATOR_LOG"\nprintf "VEDUP_MISE_LOADED=1\\n"\n' \
+    > "$fake_bin/mise"
+  # shellcheck disable=SC2016
+  printf '#!/usr/bin/env bash\nprintf "zoxide\\n" >> "$VEDUP_FAKE_GENERATOR_LOG"\nprintf "VEDUP_ZOXIDE_LOADED=1\\n"\n' \
+    > "$fake_bin/zoxide"
+  # shellcheck disable=SC2016
+  printf '#!/usr/bin/env bash\nprintf "starship\\n" >> "$VEDUP_FAKE_GENERATOR_LOG"\nprintf "VEDUP_STARSHIP_LOADED=1\\n"\n' \
+    > "$fake_bin/starship"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$fake_bin/eza"
+  chmod +x "$fake_bin/fzf" "$fake_bin/carapace" "$fake_bin/mise" "$fake_bin/zoxide" \
+    "$fake_bin/starship" "$fake_bin/eza"
+
+  # shellcheck disable=SC2016
+  output="$(HOME="$test_home" XDG_DATA_HOME="$test_home/share" VEDUP_FAKE_GENERATOR_LOG="$generator_log" \
+    PATH="$fake_bin:/usr/bin:/bin" \
+    TERM=xterm-256color zsh -fic '
+      source "$1"
+      [[ "$VEDUP_CUSTOM_MODULE" = loaded && "$VEDUP_LOCAL_MODULE" = loaded ]]
+      [[ "$VEDUP_MISE_LOADED" = 1 && "$VEDUP_ZOXIDE_LOADED" = 1 && "$VEDUP_FZF_LOADED" = 1 ]]
+      [[ "$VEDUP_CARAPACE_LOADED" = 1 && "$VEDUP_STARSHIP_LOADED" = 1 && "$VEDUP_SYNTAX_LOADED" = last ]]
+      (( $+functions[_zsh_autosuggest_start] && $+functions[_zsh_highlight] ))
+      (( $+widgets[history-substring-search-up] && $+aliases[ga] && $+functions[check_alias_usage] ))
+      [[ "$fpath[1]" = */zsh-completions/src ]]
+      [[ "$aliases[ls]" = "eza --group-directories-first --icons=auto" ]]
+      print zsh-features-ok
+    ' _ "$REPO_ROOT/dotfiles/zsh/.zshrc" 2>&1)"
+  [[ "$output" == *"zsh-features-ok"* ]] || fail "modular Zsh feature stack did not load: $output"
+  second_output="$(HOME="$test_home" XDG_DATA_HOME="$test_home/share" VEDUP_FAKE_GENERATOR_LOG="$generator_log" \
+    PATH="$fake_bin:/usr/bin:/bin" TERM=xterm-256color zsh -fic '
+      source "$1"
+      [[ "$VEDUP_MISE_LOADED" = 1 && "$VEDUP_ZOXIDE_LOADED" = 1 && "$VEDUP_FZF_LOADED" = 1 ]]
+      [[ "$VEDUP_CARAPACE_LOADED" = 1 && "$VEDUP_STARSHIP_LOADED" = 1 ]]
+      print zsh-cache-ok
+    ' _ "$REPO_ROOT/dotfiles/zsh/.zshrc" 2>&1)"
+  [[ "$second_output" == *"zsh-cache-ok"* ]] || fail "cached Zsh integrations did not load: $second_output"
+  for generator in mise zoxide fzf carapace starship; do
+    [ "$(grep -c "^${generator}$" "$generator_log")" -eq 1 ] || \
+      fail "$generator initialization was regenerated during a warm shell"
+    zsh -n "$test_home/.cache/vedup/zsh/init/$generator.zsh" || fail "$generator cache is invalid"
+  done
+  [ -s "$test_home/.cache/vedup/zsh/zcompdump-${zsh_version}" ] || fail "completion cache was not created"
+  pass "modular Zsh features and atomic warm-start caches"
+}
+
 release_asset() {
   local asset="$TEST_ROOT/bootstrap"
   sed -e 's/__RELEASE_REF__/v0.0.0/g' \
@@ -281,6 +463,8 @@ dry_run_matrix
 interactive_installer
 concise_progress
 administrator_approval
+parallel_and_recovery
+zsh_features
 macos_settings_safety
 release_asset
 dotfile_lifecycle

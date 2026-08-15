@@ -20,7 +20,7 @@ platform_prepare() {
 
 platform_install_foundations() {
   run brew update
-  run brew install git stow tmux btop
+  run brew install git stow tmux btop eza
   # These upstream releases do not publish Intel macOS artifacts for Mise.
   if [ "$ARCH" = x64 ]; then run brew install fd git-delta; fi
 }
