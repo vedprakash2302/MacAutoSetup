@@ -1,0 +1,322 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck disable=SC1091
+. "$REPO_ROOT/lib/common.sh"
+# shellcheck disable=SC1091
+. "$REPO_ROOT/lib/dotfiles.sh"
+# shellcheck disable=SC1091
+. "$REPO_ROOT/versions.env"
+
+DRY_RUN=0
+WITH_AWS=0
+WITH_DOCKER=0
+WITH_PERSONAL_APPS=0
+DOTFILES_ONLY=0
+SKIP_PLUGINS=0
+VERIFY=1
+CHANGE_SHELL=1
+PROFILE=auto
+APPLY_MACOS_DEFAULTS=auto
+MINIMAL_DOCK=0
+KEYBOARD_SHORTCUTS=0
+EXPERIMENTAL_MACOS_DEFAULTS=0
+
+usage() {
+  cat <<'EOF'
+Usage: bin/setup [options]
+
+  --profile auto|server|workstation
+  --with-aws                 Install AWS CLI
+  --with-docker              Install Docker and lazydocker on Linux
+  --with-personal-apps       Install optional macOS applications
+  --dry-run                  Print actions without changing the machine
+  --no-macos-defaults        Do not apply tracked macOS preferences
+  --minimal-dock             Remove pinned Dock apps and show only running apps
+  --keyboard-shortcuts       Replace macOS shortcuts with the tracked snapshot
+  --experimental-macos-defaults
+                              Apply undocumented trackpad and animation settings
+  --no-shell-change          Do not change the login shell
+  --no-verify                Skip the final doctor check
+  --dotfiles-only            Internal/test mode: link dotfiles only
+  --skip-plugins             Internal/test mode: skip tmux plugin installation
+EOF
+}
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --profile) [ "$#" -ge 2 ] || die "--profile requires a value"; PROFILE="$2"; shift 2 ;;
+    --with-aws) WITH_AWS=1; shift ;;
+    --with-docker) WITH_DOCKER=1; shift ;;
+    --with-personal-apps) WITH_PERSONAL_APPS=1; shift ;;
+    --dry-run) DRY_RUN=1; shift ;;
+    --no-macos-defaults) APPLY_MACOS_DEFAULTS=0; shift ;;
+    --minimal-dock) MINIMAL_DOCK=1; shift ;;
+    --keyboard-shortcuts) KEYBOARD_SHORTCUTS=1; shift ;;
+    --experimental-macos-defaults) EXPERIMENTAL_MACOS_DEFAULTS=1; shift ;;
+    --no-shell-change) CHANGE_SHELL=0; shift ;;
+    --no-verify) VERIFY=0; shift ;;
+    --dotfiles-only) DOTFILES_ONLY=1; shift ;;
+    --skip-plugins) SKIP_PLUGINS=1; shift ;;
+    -h|--help) usage; exit 0 ;;
+    *) die "Unknown option: $1" ;;
+  esac
+done
+
+detect_platform() {
+  OS="${MACAUTOSETUP_TEST_OS:-}"
+  if [ -z "$OS" ]; then
+    case "$(uname -s)" in
+      Darwin) OS=macos ;;
+      Linux) OS=linux ;;
+      *) die "Unsupported operating system: $(uname -s)" ;;
+    esac
+  fi
+
+  ARCH="${MACAUTOSETUP_TEST_ARCH:-$(uname -m)}"
+  case "$ARCH" in
+    x64|x86_64|amd64) ARCH=x64 ;;
+    arm64|aarch64) ARCH=arm64 ;;
+    *) die "Unsupported architecture: $ARCH" ;;
+  esac
+
+  if [ "$OS" = linux ]; then
+    if [ -n "${MACAUTOSETUP_TEST_DISTRO:-}" ]; then
+      DISTRO="$MACAUTOSETUP_TEST_DISTRO"
+      DISTRO_VERSION="${MACAUTOSETUP_TEST_DISTRO_VERSION:-test}"
+    else
+      [ -r /etc/os-release ] || die "Cannot identify this Linux distribution."
+      # shellcheck disable=SC1091
+      . /etc/os-release
+      DISTRO="$ID"
+      DISTRO_VERSION="${VERSION_ID:-unknown}"
+    fi
+    case "$DISTRO" in
+      ubuntu) PLATFORM_ADAPTER=ubuntu ;;
+      amzn) PLATFORM_ADAPTER=amazon ;;
+      *) die "Unsupported Linux distribution for v1: $DISTRO" ;;
+    esac
+    if [ -z "${MACAUTOSETUP_TEST_DISTRO:-}" ]; then
+      case "$DISTRO/$DISTRO_VERSION" in
+        ubuntu/22.04|ubuntu/24.04|amzn/2|amzn/2023) ;;
+        *) die "Unsupported Linux release for v1: $DISTRO $DISTRO_VERSION" ;;
+      esac
+    fi
+  else
+    DISTRO=macos
+    DISTRO_VERSION="$(sw_vers -productVersion 2>/dev/null || printf 'test')"
+    PLATFORM_ADAPTER=macos
+  fi
+
+  if [ "$PROFILE" = auto ]; then
+    if [ "$OS" = macos ]; then PROFILE=workstation; else PROFILE=server; fi
+  fi
+  case "$PROFILE" in server|workstation) ;; *) die "Unsupported profile: $PROFILE" ;; esac
+  if [ "$APPLY_MACOS_DEFAULTS" = auto ]; then
+    if [ "$OS" = macos ] && [ "$PROFILE" = workstation ]; then APPLY_MACOS_DEFAULTS=1; else APPLY_MACOS_DEFAULTS=0; fi
+  fi
+  if [ "$APPLY_MACOS_DEFAULTS" = 0 ] && { [ "$MINIMAL_DOCK" = 1 ] || [ "$KEYBOARD_SHORTCUTS" = 1 ] || [ "$EXPERIMENTAL_MACOS_DEFAULTS" = 1 ]; }; then
+    die "macOS preference opt-ins cannot be combined with --no-macos-defaults"
+  fi
+}
+
+install_mise() {
+  local platform asset expected url target installed_mise
+  platform="$OS"
+  installed_mise="$HOME/.local/bin/mise"
+  if [ -x "$installed_mise" ] && "$installed_mise" --version 2>/dev/null | grep -Eq "(^| )${MISE_VERSION}([ +]|$)"; then
+    export PATH="$HOME/.local/bin:$HOME/.local/share/mise/shims:$PATH"
+    log "Mise $MISE_VERSION is already installed"
+    return 0
+  fi
+  asset="mise-v${MISE_VERSION}-${platform}-${ARCH}"
+  case "$platform/$ARCH" in
+    linux/x64) expected="$MISE_SHA_LINUX_X64" ;;
+    linux/arm64) expected="$MISE_SHA_LINUX_ARM64" ;;
+    macos/x64) expected="$MISE_SHA_MACOS_X64" ;;
+    macos/arm64) expected="$MISE_SHA_MACOS_ARM64" ;;
+    *) die "No Mise checksum for $platform/$ARCH" ;;
+  esac
+  [ -n "$expected" ] || die "No Mise checksum for $platform/$ARCH"
+  url="https://github.com/jdx/mise/releases/download/v${MISE_VERSION}/${asset}"
+  target="${TMPDIR:-/tmp}/$asset"
+  download_verified "$url" "$expected" "$target"
+  run chmod +x "$target"
+  run mkdir -p "$HOME/.local/bin"
+  run install -m 0755 "$target" "$HOME/.local/bin/mise"
+  export PATH="$HOME/.local/bin:$HOME/.local/share/mise/shims:$PATH"
+}
+
+install_mise_tools() {
+  local tools=(node python aqua:neovim/neovim starship zoxide ripgrep bat fzf jq yq lazygit gh tree-sitter)
+  if [ "$OS/$ARCH" != linux/arm64 ]; then tools+=(tlrc); fi
+  if [ "$OS" = linux ]; then
+    tools+=(fd delta btop)
+  elif [ "$ARCH" = arm64 ]; then
+    tools+=(fd delta)
+  fi
+  [ "$WITH_AWS" = 1 ] && tools+=(awscli)
+  [ "$WITH_DOCKER" = 1 ] && tools+=(lazydocker)
+  if [ "$DRY_RUN" = 1 ]; then
+    printf '[dry-run] mise trust %q\n' "$REPO_ROOT/mise.toml"
+    printf '[dry-run] MISE_CONFIG_FILE=%q mise install --locked' "$REPO_ROOT/mise.toml"
+    quote_command "${tools[@]}"
+    return 0
+  fi
+  mise trust "$REPO_ROOT/mise.toml"
+  MISE_CONFIG_FILE="$REPO_ROOT/mise.toml" mise install --locked "${tools[@]}"
+}
+
+install_tlrc_linux_arm64() {
+  [ "$OS/$ARCH" = linux/arm64 ] || return 0
+  if has tldr && tldr --version 2>/dev/null | grep -q "$TLRC_VERSION"; then return 0; fi
+  local build_dir archive
+  build_dir="$(mktemp -d)"
+  archive="$build_dir/tlrc.tar.gz"
+  download_verified \
+    "https://github.com/tldr-pages/tlrc/releases/download/v${TLRC_VERSION}/tlrc-v${TLRC_VERSION}-aarch64-unknown-linux-musl.tar.gz" \
+    "$TLRC_SHA_LINUX_ARM64" "$archive"
+  run tar -xzf "$archive" -C "$build_dir" tldr
+  run install -m 0755 "$build_dir/tldr" "$HOME/.local/bin/tldr"
+}
+
+install_tmux_plugins() {
+  local tpm="$HOME/.tmux/plugins/tpm" spec repository commit name destination
+  local plugins=(
+    "christoomey/vim-tmux-navigator:$TMUX_NAVIGATOR_COMMIT"
+    "tmux-plugins/tmux-resurrect:$TMUX_RESURRECT_COMMIT"
+    "tmux-plugins/tmux-continuum:$TMUX_CONTINUUM_COMMIT"
+    "tmux-plugins/tmux-sensible:$TMUX_SENSIBLE_COMMIT"
+    "tmux-plugins/tmux-online-status:$TMUX_ONLINE_STATUS_COMMIT"
+    "tmux-plugins/tmux-battery:$TMUX_BATTERY_COMMIT"
+    "catppuccin/tmux:$TMUX_CATPPUCCIN_COMMIT"
+  )
+  if [ ! -d "$tpm/.git" ]; then
+    run mkdir -p "$(dirname "$tpm")"
+    run git clone https://github.com/tmux-plugins/tpm.git "$tpm"
+  fi
+  run git -C "$tpm" fetch --quiet origin
+  run git -C "$tpm" checkout --quiet --detach "$TPM_COMMIT"
+
+  for spec in "${plugins[@]}"; do
+    repository="${spec%%:*}"
+    commit="${spec#*:}"
+    name="${repository##*/}"
+    destination="$HOME/.tmux/plugins/$name"
+    if [ -e "$destination" ] && [ ! -d "$destination/.git" ]; then
+      die "$destination exists but is not a Git checkout. Move it aside and retry."
+    fi
+    if [ ! -d "$destination/.git" ]; then
+      run git clone "https://github.com/$repository.git" "$destination"
+    fi
+    if [ "$DRY_RUN" != 1 ] && [ -n "$(git -C "$destination" status --porcelain)" ]; then
+      die "$destination has local changes. Commit or discard them before upgrading."
+    fi
+    run git -C "$destination" fetch --quiet origin
+    run git -C "$destination" checkout --quiet --detach "$commit"
+  done
+}
+
+install_cursor_extensions() {
+  has cursor || { warn "Cursor is not on PATH; extension installation will be retried by the next setup run."; return 0; }
+  while IFS= read -r extension; do
+    [ -n "$extension" ] && run cursor --install-extension "$extension" --force
+  done < "$REPO_ROOT/profiles/macos/cursor-extensions.txt"
+}
+
+change_login_shell() {
+  [ "$CHANGE_SHELL" = 1 ] || return 0
+  local zsh_path
+  zsh_path="$(command -v zsh || true)"
+  [ -n "$zsh_path" ] || die "Zsh is not installed."
+  [ "${SHELL:-}" = "$zsh_path" ] && return 0
+  if [ "$DRY_RUN" = 1 ]; then
+    printf '[dry-run] chsh -s %q %q\n' "$zsh_path" "$USER"
+  else
+    chsh -s "$zsh_path" "$USER" || warn "Could not change the login shell; run: chsh -s $zsh_path"
+  fi
+}
+
+write_state() {
+  local state_dir state_file backup_list
+  state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/macautosetup"
+  state_file="$state_dir/install.env"
+  backup_list="$state_dir/backups.list"
+  [ "$DRY_RUN" = 1 ] && return 0
+  mkdir -p "$state_dir"
+  if [ "${BACKUP_OCCURRED:-0}" = 1 ] && ! grep -Fqx "$BACKUP_DIR" "$backup_list" 2>/dev/null; then
+    printf '%s\n' "$BACKUP_DIR" >> "$backup_list"
+  fi
+  {
+    printf 'REPO_ROOT=%q\n' "$REPO_ROOT"
+    printf 'INSTALLED_REF=%q\n' "$(git -C "$REPO_ROOT" describe --tags --always --dirty)"
+    printf 'OS=%q\n' "$OS"
+    printf 'DISTRO=%q\n' "$DISTRO"
+    printf 'PROFILE=%q\n' "$PROFILE"
+    printf 'WITH_AWS=%q\n' "$WITH_AWS"
+    printf 'WITH_DOCKER=%q\n' "$WITH_DOCKER"
+    printf 'STOW_PACKAGES=%q\n' "${STOW_PACKAGES[*]}"
+  } > "$state_file"
+}
+
+main() {
+  detect_platform
+  log "Detected $OS/$DISTRO $DISTRO_VERSION on $ARCH; profile=$PROFILE"
+
+  # shellcheck disable=SC1090
+  . "$REPO_ROOT/lib/platforms/$PLATFORM_ADAPTER.sh"
+
+  export PATH="$HOME/.local/bin:$HOME/.local/share/mise/shims:$PATH"
+  STOW_PACKAGES=(zsh nvim starship tmux scripts)
+  if [ "$OS" = macos ]; then STOW_PACKAGES+=(aerospace ghostty cursor); fi
+
+  if [ "$DOTFILES_ONLY" != 1 ]; then
+    platform_prepare
+    platform_install_foundations
+    install_mise
+    install_mise_tools
+    install_tlrc_linux_arm64
+    if [ "$PROFILE" = workstation ]; then platform_install_workstation; fi
+    if [ "$WITH_DOCKER" = 1 ]; then platform_install_docker; fi
+    if [ "$WITH_AWS" = 1 ]; then platform_install_aws_dependencies; fi
+    if [ "$OS" = macos ] && [ "$WITH_PERSONAL_APPS" = 1 ]; then
+      run brew bundle --file "$REPO_ROOT/profiles/macos/Brewfile.optional"
+      if ! has mas; then run brew install mas; fi
+      run "$REPO_ROOT/dotfiles/macos/mas-optional.sh"
+    fi
+  fi
+
+  if ! has stow && [ "$DRY_RUN" != 1 ]; then die "GNU Stow is required to link dotfiles."; fi
+  setup_dotfiles
+
+  if [ "$SKIP_PLUGINS" != 1 ] && [ "$DOTFILES_ONLY" != 1 ]; then install_tmux_plugins; fi
+  if [ "$OS" = macos ] && [ "$DOTFILES_ONLY" != 1 ]; then install_cursor_extensions; fi
+  if [ "$OS" = macos ] && [ "$APPLY_MACOS_DEFAULTS" = 1 ] && [ "$DOTFILES_ONLY" != 1 ]; then
+    macos_settings_args=()
+    [ "$MINIMAL_DOCK" = 1 ] && macos_settings_args+=(--minimal-dock)
+    [ "$KEYBOARD_SHORTCUTS" = 1 ] && macos_settings_args+=(--keyboard-shortcuts)
+    [ "$EXPERIMENTAL_MACOS_DEFAULTS" = 1 ] && macos_settings_args+=(--experimental)
+    if [ "$DRY_RUN" = 1 ]; then
+      if [ "$(uname -s)" = Darwin ]; then
+        "$REPO_ROOT/dotfiles/macos/setup-commands.sh" --dry-run "${macos_settings_args[@]}"
+      else
+        MACAUTOSETUP_TEST_OS=macos MACAUTOSETUP_TEST_MACOS_MAJOR=26 \
+          "$REPO_ROOT/dotfiles/macos/setup-commands.sh" --dry-run "${macos_settings_args[@]}"
+      fi
+    else
+      "$REPO_ROOT/dotfiles/macos/setup-commands.sh" "${macos_settings_args[@]}"
+    fi
+  fi
+
+  change_login_shell
+  write_state
+
+  if [ "$VERIFY" = 1 ] && [ "$DRY_RUN" != 1 ]; then "$REPO_ROOT/bin/doctor"; fi
+  log "Setup complete. Open a new terminal to use the configured shell."
+}
+
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+  main
+fi

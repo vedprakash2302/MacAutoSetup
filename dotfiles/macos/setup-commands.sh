@@ -1,118 +1,48 @@
-#################### Keyboard related settings ####################
-defaults write NSGlobalDomain KeyRepeat -int 1
-defaults write NSGlobalDomain InitialKeyRepeat -int 15
-defaults write NSGlobalDomain ApplePressAndHoldEnabled -bool false
-# Fn key usage
-defaults write com.apple.HIToolbox AppleFnUsageType -int "1"
-# F1, F2, etc. as function keys
-# defaults write NSGlobalDomain com.apple.keyboard.fnState -bool true
-# Keyboard navigation
-defaults write NSGlobalDomain AppleKeyboardUIMode -int 2
+#!/usr/bin/env bash
 
-# Import keyboard shortcuts
-defaults import com.apple.symbolichotkeys ./dotfiles/macos/keyboard-shortcuts.xml
-/System/Library/PrivateFrameworks/SystemAdministration.framework/Resources/activateSettings -u
+set -Eeuo pipefail
 
-#################### Trackpad related settings ####################
-defaults write -globalDomain "com.apple.mouse.scaling" -int 2
-defaults write -globalDomain "com.apple.trackpad.scaling" -int 2
-defaults write com.apple.driver.AppleBluetoothMultitouch.trackpad "Clicking" -bool true
-defaults write com.apple.AppleMultitouchTrackpad "Clicking" -bool true
-defaults -currentHost write -globalDomain "com.apple.mouse.tapBehavior" -int 1
-defaults write "com.apple.driver.AppleBluetoothMultitouch.mouse" MouseButtonMode TwoButton
-defaults write "com.apple.AppleMultitouchMouse.plist" MouseButtonMode TwoButton
-defaults write -g AppleShowScrollBars -string "WhenScrolling"
-# three finger drag
-defaults write com.apple.AppleMultitouchTrackpad TrackpadThreeFingerDrag -bool true
-defaults write com.apple.driver.AppleBluetoothMultitouch.trackpad TrackpadThreeFingerDrag -bool true
-# Mouse speed
-defaults write -g com.apple.mouse.scaling 3
-defaults write -g com.apple.trackpad.scaling 3
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+MACOS_DRY_RUN=0
+MINIMAL_DOCK=0
+KEYBOARD_SHORTCUTS=0
+EXPERIMENTAL=0
 
-#################### Finder related settings ####################
-defaults write com.apple.Finder AppleShowAllFiles -bool true
-defaults write NSGlobalDomain AppleShowAllExtensions -bool true
-defaults write com.apple.finder ShowPathbar -bool true
-defaults write com.apple.Finder "FXPreferredViewStyle" clmv
-chflags nohidden ~/Library
-defaults write com.apple.finder NewWindowTarget -string "PfHm"
-defaults write com.apple.finder NewWindowTargetPath -string "file://${HOME}/"
-# Finder: show status bar
-defaults write com.apple.finder ShowStatusBar -bool true
-# Finder: show path bar
-defaults write com.apple.finder ShowPathbar -bool true
-# Display full POSIX path as Finder window title
-defaults write com.apple.finder _FXShowPosixPathInTitle -bool true
-# Keep folders on top when sorting by name
-defaults write com.apple.finder _FXSortFoldersFirst -bool true
-# When performing a search, search the current folder by default
-defaults write com.apple.finder FXDefaultSearchScope -string "SCcf"
-defaults write com.apple.desktopservices DSDontWriteNetworkStores true
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --dry-run) MACOS_DRY_RUN=1 ;;
+    --minimal-dock) MINIMAL_DOCK=1 ;;
+    --keyboard-shortcuts) KEYBOARD_SHORTCUTS=1 ;;
+    --experimental) EXPERIMENTAL=1 ;;
+    *) printf 'Unknown macOS settings option: %s\n' "$1" >&2; exit 2 ;;
+  esac
+  shift
+done
+export MACOS_DRY_RUN
 
-#################### Dock related settings ####################
-defaults write com.apple.dock autohide -bool true
-defaults write com.apple.dock "show-recents" -bool false
-# Change minimize/maximize window effect
-defaults write com.apple.dock mineffect -string "scale"
-# Minimize windows into their application’s icon
-defaults write com.apple.dock minimize-to-application -bool true
-# Show indicator lights for open applications in the Dock
-defaults write com.apple.dock show-process-indicators -bool true
-# Wipe all (default) app icons from the Dock
-defaults write com.apple.dock persistent-apps -array
-# Show only open applications in the Dock
-defaults write com.apple.dock static-only -bool true
-# Speed up Mission Control animations
-defaults write com.apple.dock expose-animation-duration -float 0.1
-# Automatically hide and show the Dock
-defaults write com.apple.dock autohide -bool true
-# Remove the auto-hiding Dock delay
-defaults write com.apple.dock autohide-delay -float 0
-# Remove the animation when hiding/showing the Dock
-defaults write com.apple.dock autohide-time-modifier -float 1
-# Make Dock icons of hidden applications translucent
-defaults write com.apple.dock showhidden -bool true
-# Don’t show recent applications in Dock
-defaults write com.apple.dock show-recents -bool false
-# Dock size
-defaults write com.apple.dock tilesize -int 48
-# Spring loading
-defaults write com.apple.dock "enable-spring-load-actions-on-all-items" -bool "true"
+if [ "${MACAUTOSETUP_TEST_OS:-}" != macos ] && [ "$(uname -s)" != Darwin ]; then
+  printf 'macOS settings can only be applied on macOS.\n' >&2
+  exit 1
+fi
 
-defaults write com.apple.dock "expose-group-apps" -bool "true"
+if [ "$MACOS_DRY_RUN" = 1 ]; then
+  printf '[dry-run] %q\n' "$SCRIPT_DIR/../../bin/macos-backup"
+else
+  backup_dir="$("$SCRIPT_DIR/../../bin/macos-backup")"
+  trap 'printf "macOS preference application failed. Restore with: %q %q\n" "$SCRIPT_DIR/../../bin/macos-restore" "$backup_dir" >&2' ERR
+fi
 
-#################### Desktop related settings ####################
-defaults write com.apple.finder "_FXSortFoldersFirstOnDesktop" -bool "true"
-defaults write com.apple.finder "ShowExternalHardDrivesOnDesktop" -bool "false"
-defaults write com.apple.finder "ShowRemovableMediaOnDesktop" -bool "false"
+"$SCRIPT_DIR/settings/core.sh"
+[ "$MINIMAL_DOCK" = 1 ] && "$SCRIPT_DIR/settings/minimal-dock.sh"
+[ "$KEYBOARD_SHORTCUTS" = 1 ] && "$SCRIPT_DIR/settings/keyboard-shortcuts.sh"
+[ "$EXPERIMENTAL" = 1 ] && "$SCRIPT_DIR/settings/experimental.sh"
 
-#################### Other settings ####################
-defaults write com.apple.TextEdit "RichText" -bool false
-# Disable automatic capitalization as it’s annoying when typing code
-defaults write NSGlobalDomain NSAutomaticCapitalizationEnabled -bool false
-
-# Disable smart dashes as they’re annoying when typing code
-defaults write NSGlobalDomain NSAutomaticDashSubstitutionEnabled -bool false
-
-# Disable automatic period substitution as it’s annoying when typing code
-defaults write NSGlobalDomain NSAutomaticPeriodSubstitutionEnabled -bool false
-
-# Disable smart quotes as they’re annoying when typing code
-defaults write NSGlobalDomain NSAutomaticQuoteSubstitutionEnabled -bool false
-
-# Disable auto-correct
-defaults write NSGlobalDomain NSAutomaticSpellingCorrectionEnabled -bool false
-
-# Enable dragging from anywhere in window using CTRL+CMD and left click drag
-defaults write -g NSWindowShouldDragOnGesture -bool true
-
-#################### Application related settings ####################
-
-## Example app specific settings:
-# # Set up my preferred keyboard shortcuts
-# cp -r init/spectacle.json ~/Library/Application\ Support/Spectacle/Shortcuts.json 2> /dev/null
-
-# Restart all affected applications
-killall Dock
-killall Finder
-killall SystemUIServer
+if [ "$MACOS_DRY_RUN" != 1 ]; then
+  if [ "$KEYBOARD_SHORTCUTS" = 1 ] && [ -x /System/Library/PrivateFrameworks/SystemAdministration.framework/Resources/activateSettings ]; then
+    /System/Library/PrivateFrameworks/SystemAdministration.framework/Resources/activateSettings -u || true
+  fi
+  killall Dock 2>/dev/null || true
+  killall Finder 2>/dev/null || true
+  killall SystemUIServer 2>/dev/null || true
+  trap - ERR
+fi

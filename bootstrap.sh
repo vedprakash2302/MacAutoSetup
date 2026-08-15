@@ -1,64 +1,7 @@
 #!/usr/bin/env bash
 
-set -euo pipefail
+set -Eeuo pipefail
 
-# Install Xcode Command Line Tools if not already installed
-if ! xcode-select -p &>/dev/null; then
-	echo "Installing Xcode Command Line Tools..."
-	xcode-select --install
-	until xcode-select -p &>/dev/null; do
-		sleep 5
-	done
-fi
-
-# Install Homebrew if not already installed
-if ! command -v brew &>/dev/null; then
-	echo "Installing Homebrew..."
-	/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-	echo 'eval "$(/opt/homebrew/bin/brew shellenv)"' >>~/.zprofile
-	eval "$(/opt/homebrew/bin/brew shellenv)"
-fi
-
-# Install applications via Brewfile
-if [[ -f ./dotfiles/macos/Brewfile ]]; then
-	echo "Installing applications from Brewfile..."
-	brew bundle --file=./dotfiles/macos/Brewfile
-else
-	echo "Warning: Brewfile not found!"
-fi
-
-# Install from mac app store
-if [[ -f ./dotfiles/macos/mas.sh ]]; then
-	echo "Installing applications from mas.sh..."
-  chmod +x ./dotfiles/macos/mas.sh
-	./dotfiles/macos/mas.sh
-else
-	echo "Warning: mas.sh not found!"
-fi
-
-# Install Zap ZSH plugin manager
-if [[ ! -d "${XDG_DATA_HOME:-$HOME/.local/share}/zap" ]]; then
-	echo "Installing Zap ZSH plugin manager..."
-	zsh <(curl -s https://raw.githubusercontent.com/zap-zsh/zap/master/install.zsh) --branch release-v1
-	echo "Removing .zshrc so stow can manage it..."
-	rm -f ~/.zshrc
-fi
-
-# Re-source Homebrew env just in case
-eval "$(/opt/homebrew/bin/brew shellenv)"
-
-# Use GNU Stow to symlink dotfiles
-echo "Setting up dotfiles with GNU Stow..."
-stow --target="$HOME" --dir=./dotfiles zsh vim nvim aerospace starship ghostty tmux warp cursor scripts
-
-# Set macOS settings
-echo "Setting macOS settings..."
-chmod +x ./dotfiles/macos/setup-commands.sh
-./dotfiles/macos/setup-commands.sh
-
-# Setup Cursor extensions
-echo "Installing cursor sync-extensions"
-cat ./dotfiles/cursor/.cursor/sync-extensions.txt | xargs -L 1 cursor --install-extension
-
-# Optionally restart the shell
-exec zsh -l
+printf 'bootstrap.sh is deprecated; forwarding to bin/setup.\n' >&2
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+exec "$SCRIPT_DIR/bin/setup" "$@"

@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+[ "$(uname -s)" = Darwin ] || { printf 'macos-backup can only run on macOS.\n' >&2; exit 1; }
+
+STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/macautosetup"
+BACKUP_DIR="$STATE_DIR/macos-preferences/$(date -u +%Y%m%dT%H%M%SZ)-$$"
+LEDGER="$STATE_DIR/macos-preferences.list"
+MANIFEST="$BACKUP_DIR/manifest"
+
+domains=(
+  NSGlobalDomain
+  com.apple.HIToolbox
+  com.apple.symbolichotkeys
+  com.apple.driver.AppleBluetoothMultitouch.trackpad
+  com.apple.AppleMultitouchTrackpad
+  com.apple.driver.AppleBluetoothMultitouch.mouse
+  com.apple.AppleMultitouchMouse
+  com.apple.finder
+  com.apple.desktopservices
+  com.apple.dock
+  com.apple.TextEdit
+)
+
+mkdir -p "$BACKUP_DIR"
+exported_preferences=0
+for domain in "${domains[@]}"; do
+  filename="${domain//\//_}.plist"
+  if defaults export "$domain" "$BACKUP_DIR/$filename" >/dev/null 2>&1; then
+    printf 'user|%s|%s\n' "$domain" "$filename" >> "$MANIFEST"
+    exported_preferences=$((exported_preferences + 1))
+  fi
+done
+
+host_filename=NSGlobalDomain.current-host.plist
+if defaults -currentHost export NSGlobalDomain "$BACKUP_DIR/$host_filename" >/dev/null 2>&1; then
+  printf 'host|NSGlobalDomain|%s\n' "$host_filename" >> "$MANIFEST"
+  exported_preferences=$((exported_preferences + 1))
+fi
+
+if [ -d "$HOME/Library" ]; then
+  library_flag=nohidden
+  if /bin/ls -ldO "$HOME/Library" | awk '{ for (i = 1; i <= NF; i++) if ($i == "hidden") found = 1 } END { exit !found }'; then
+    library_flag=hidden
+  fi
+  printf 'flag|%s|%s\n' "$HOME/Library" "$library_flag" >> "$MANIFEST"
+fi
+
+[ "$exported_preferences" -gt 0 ] || { printf 'Could not export any macOS preference domains.\n' >&2; exit 1; }
+printf '%s\n' "$BACKUP_DIR" >> "$LEDGER"
+printf '[macos] Preference backup: %s\n' "$BACKUP_DIR" >&2
+printf '%s\n' "$BACKUP_DIR"

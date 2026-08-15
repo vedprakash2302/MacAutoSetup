@@ -1,0 +1,11 @@
+tap "jorgerojas26/lazysql"
+
+brew "lazysql"
+brew "wget"
+
+cask "ankerwork"
+cask "caffeine"
+cask "craft"
+cask "flux-app"
+cask "focus"
+cask "warp"

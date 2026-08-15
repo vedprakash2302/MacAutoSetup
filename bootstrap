@@ -1,0 +1,116 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+REPOSITORY_URL="https://github.com/vedprakash2302/MacAutoSetup.git"
+INSTALL_ROOT="${MACAUTOSETUP_ROOT:-${XDG_DATA_HOME:-$HOME/.local/share}/macautosetup/repo}"
+RELEASE_REF="${MACAUTOSETUP_RELEASE_REF:-__RELEASE_REF__}"
+RELEASE_COMMIT="${MACAUTOSETUP_RELEASE_COMMIT:-__RELEASE_COMMIT__}"
+
+log() { printf '[bootstrap] %s\n' "$*"; }
+die() { printf '[bootstrap] ERROR: %s\n' "$*" >&2; exit 1; }
+
+has() { command -v "$1" >/dev/null 2>&1; }
+
+sudo_run() {
+  if [ "$(id -u)" -eq 0 ]; then
+    "$@"
+  elif has sudo; then
+    sudo "$@"
+  else
+    die "Administrator access is required to install Git."
+  fi
+}
+
+detect_os() {
+  case "$(uname -s)" in
+    Darwin) printf 'macos\n' ;;
+    Linux) printf 'linux\n' ;;
+    *) die "Unsupported operating system: $(uname -s)" ;;
+  esac
+}
+
+ensure_git() {
+  has git && return 0
+
+  case "$(detect_os)" in
+    macos)
+      log "Installing Xcode Command Line Tools. Complete the macOS prompt if one appears."
+      xcode-select --install >/dev/null 2>&1 || true
+      attempts=0
+      until xcode-select -p >/dev/null 2>&1; do
+        attempts=$((attempts + 1))
+        [ "$attempts" -lt 120 ] || die "Timed out waiting for Xcode Command Line Tools. Install them and retry."
+        sleep 5
+      done
+      ;;
+    linux)
+      [ -r /etc/os-release ] || die "Cannot identify this Linux distribution."
+      # shellcheck disable=SC1091
+      . /etc/os-release
+      case "$ID" in
+        ubuntu)
+          sudo_run apt-get update
+          sudo_run apt-get install -y ca-certificates curl git
+          ;;
+        amzn)
+          if has dnf; then sudo_run dnf install -y ca-certificates curl git
+          else sudo_run yum install -y ca-certificates curl git; fi
+          ;;
+        *) die "Unsupported Linux distribution for v1: $ID" ;;
+      esac
+      ;;
+  esac
+
+  has git || die "Git installation did not succeed."
+}
+
+resolve_ref() {
+  if [ "${AUTHOR_MODE:-0}" = "1" ]; then
+    printf 'main\n'
+  elif [[ "$RELEASE_REF" != __RELEASE_REF__ ]]; then
+    printf '%s\n' "$RELEASE_REF"
+  else
+    # Direct execution from the repository is a development install.
+    printf 'main\n'
+  fi
+}
+
+checkout_repo() {
+  local ref
+  ref="$(resolve_ref)"
+
+  if [ -e "$INSTALL_ROOT" ] && [ ! -d "$INSTALL_ROOT/.git" ]; then
+    die "$INSTALL_ROOT exists but is not a Git checkout. Move it aside and retry."
+  fi
+
+  if [ ! -d "$INSTALL_ROOT/.git" ]; then
+    log "Cloning MacAutoSetup into $INSTALL_ROOT"
+    mkdir -p "$(dirname "$INSTALL_ROOT")"
+    git clone "$REPOSITORY_URL" "$INSTALL_ROOT"
+  fi
+
+  if [ -n "$(git -C "$INSTALL_ROOT" status --porcelain)" ]; then
+    die "The managed checkout is dirty. Commit or stash its changes before upgrading."
+  fi
+
+  git -C "$INSTALL_ROOT" fetch --prune origin '+refs/heads/*:refs/remotes/origin/*' '+refs/tags/*:refs/tags/*'
+  if [ "${AUTHOR_MODE:-0}" = "1" ]; then
+    git -C "$INSTALL_ROOT" checkout -B main origin/main
+  else
+    git -C "$INSTALL_ROOT" checkout --detach "$ref"
+  fi
+
+  if [[ "$RELEASE_COMMIT" != __RELEASE_COMMIT__ ]] && [ "${AUTHOR_MODE:-0}" != "1" ]; then
+    [ "$(git -C "$INSTALL_ROOT" rev-parse HEAD)" = "$RELEASE_COMMIT" ] || \
+      die "Release checkout does not match the expected release commit."
+  fi
+}
+
+main() {
+  ensure_git
+  checkout_repo
+  exec "$INSTALL_ROOT/bin/setup" "$@"
+}
+
+main "$@"

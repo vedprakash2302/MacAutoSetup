@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+STATE_FILE="${XDG_STATE_HOME:-$HOME/.local/state}/macautosetup/install.env"
+BACKUP_LIST="${XDG_STATE_HOME:-$HOME/.local/state}/macautosetup/backups.list"
+RESTORE=0
+case "$#:${1:-}" in
+  0:) ;;
+  1:--restore-backup) RESTORE=1 ;;
+  *) printf 'Usage: bin/uninstall [--restore-backup]\n' >&2; exit 2 ;;
+esac
+
+[ -r "$STATE_FILE" ] || { printf 'No MacAutoSetup installation state was found.\n' >&2; exit 1; }
+# shellcheck disable=SC1090
+. "$STATE_FILE"
+
+read -r -a packages <<< "$STOW_PACKAGES"
+for package in "${packages[@]}"; do
+  stow --no-folding --delete --target="$HOME" --dir="$REPO_ROOT/dotfiles" "$package" || true
+done
+
+if [ "$RESTORE" = 1 ] && [ -r "$BACKUP_LIST" ]; then
+  backup_dirs=()
+  while IFS= read -r backup_dir; do
+    [ -n "$backup_dir" ] && backup_dirs+=("$backup_dir")
+  done < "$BACKUP_LIST"
+  for ((index=0; index < ${#backup_dirs[@]}; index++)); do
+    backup_dir="${backup_dirs[$index]}"
+    [ -d "$backup_dir" ] || continue
+    while IFS= read -r -d '' source; do
+      relative="${source#"$backup_dir"/}"
+      target="$HOME/$relative"
+      if [ ! -e "$target" ] && [ ! -L "$target" ]; then
+        mkdir -p "$(dirname "$target")"
+        mv "$source" "$target"
+      else
+        printf 'Not restoring %s because the target exists.\n' "$target" >&2
+      fi
+    done < <(find "$backup_dir" \( -type f -o -type l \) -print0)
+  done
+fi
+
+rm -f "$STATE_FILE"
+printf 'MacAutoSetup dotfile links were removed. Installed packages were left untouched.\n'
