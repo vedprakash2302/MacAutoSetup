@@ -399,8 +399,8 @@ load_saved_choices() {
 }
 
 review_gui_updates() {
-  local cask
-  local -a selected=() review_casks
+  local cask selected_upgrades=""
+  local -a review_casks
   [ "$OS" = macos ] && [ "$PROFILE" = workstation ] && inventory_command_exists brew || return 0
   ui_heading "Optional desktop application updates"
   if [ "$UPGRADE_APPS" = 1 ]; then
@@ -415,9 +415,11 @@ review_gui_updates() {
     inventory_package_installed cask "$cask" || continue
     plan_cask_outdated "$cask" || continue
     ask_yes_no no "Upgrade $cask during this sync?"
-    [ "$UI_RESULT" = yes ] && selected+=("$cask")
+    if [ "$UI_RESULT" = yes ]; then
+      selected_upgrades="${selected_upgrades}${selected_upgrades:+ }$cask"
+    fi
   done
-  VEDUP_SELECTED_APP_UPGRADES="${selected[*]}"
+  VEDUP_SELECTED_APP_UPGRADES="$selected_upgrades"
   export VEDUP_SELECTED_APP_UPGRADES
 }
 
