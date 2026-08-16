@@ -273,15 +273,17 @@ concise_progress() {
   local concise_output verbose_output concise_log activity_output activity_home="$TEST_ROOT/activity-home"
   mkdir -p "$concise_home" "$verbose_home" "$activity_home"
 
-  concise_output="$(HOME="$concise_home" TERM=xterm-256color MACAUTOSETUP_TEST_COMPACT=1 \
-    "$REPO_ROOT/bin/setup" --dotfiles-only --skip-plugins --no-shell-change --no-verify 2>&1)"
+  if ! concise_output="$(HOME="$concise_home" TERM=xterm-256color MACAUTOSETUP_TEST_COMPACT=1 \
+    "$REPO_ROOT/bin/setup" --dotfiles-only --skip-plugins --no-shell-change --no-verify 2>&1)"; then
+    fail "concise dotfile sync exited unsuccessfully: $concise_output"
+  fi
   [[ "$concise_output" == *"Concise view: full output is being saved"* ]] || \
     fail "concise installation does not identify its detailed log"
   [[ "$concise_output" == *"Setup complete"* ]] || fail "concise installation did not show its completion summary"
   concise_log="$(find "$concise_home/.local/state/vedup/logs" -type f -name '*.log' -print -quit)"
   grep -q '\[setup\] Linking zsh dotfiles' "$concise_log" || fail "concise installation did not retain command output"
 
-  activity_output="$(HOME="$activity_home" TERM=xterm-256color MACAUTOSETUP_TEST_COMPACT=1 \
+  if ! activity_output="$(HOME="$activity_home" TERM=xterm-256color MACAUTOSETUP_TEST_COMPACT=1 \
     MACAUTOSETUP_ACTIVITY_INTERVAL=0.05 bash -c '
       set -Eeuo pipefail
       . "$1"
@@ -293,12 +295,16 @@ concise_progress() {
       sleep 0.2
       progress_done
       progress_finish
-    ' _ "$REPO_ROOT/lib/common.sh" 2>&1)"
+    ' _ "$REPO_ROOT/lib/common.sh" 2>&1)"; then
+    fail "concise activity-feed simulation exited unsuccessfully: $activity_output"
+  fi
   [[ "$activity_output" == *"Working ·"* && "$activity_output" == *"large-download-marker"* ]] || \
     fail "concise dashboard does not refresh recent command activity"
 
-  verbose_output="$(HOME="$verbose_home" TERM=xterm-256color MACAUTOSETUP_TEST_COMPACT=1 \
-    "$REPO_ROOT/bin/setup" --dotfiles-only --skip-plugins --no-shell-change --no-verify --verbose 2>&1)"
+  if ! verbose_output="$(HOME="$verbose_home" TERM=xterm-256color MACAUTOSETUP_TEST_COMPACT=1 \
+    "$REPO_ROOT/bin/setup" --dotfiles-only --skip-plugins --no-shell-change --no-verify --verbose 2>&1)"; then
+    fail "verbose dotfile sync exited unsuccessfully: $verbose_output"
+  fi
   [[ "$verbose_output" == *"[setup] Linking zsh dotfiles"* ]] || fail "--verbose did not stream command output"
   pass "fixed concise dashboard and verbose output override"
 }
