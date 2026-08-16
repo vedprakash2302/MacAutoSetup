@@ -3,10 +3,11 @@ export HISTFILE=$HOME/.zhistory
 export SAVEHIST=100000
 export HISTSIZE=100000
 
-# User-local tools and the repository-wide Mise configuration.
+# User-local tools and the active immutable Vedup release configuration.
 export PATH="$HOME/.local/bin:$HOME/.local/share/mise/shims:$PATH"
-export MACAUTOSETUP_ROOT="${MACAUTOSETUP_ROOT:-${XDG_DATA_HOME:-$HOME/.local/share}/macautosetup/repo}"
-[[ -r "$MACAUTOSETUP_ROOT/mise.toml" ]] && export MISE_CONFIG_FILE="$MACAUTOSETUP_ROOT/mise.toml"
+export VEDUP_ROOT="${VEDUP_ROOT:-${XDG_DATA_HOME:-$HOME/.local/share}/vedup/current}"
+export MACAUTOSETUP_ROOT="$VEDUP_ROOT" # Deprecated compatibility alias.
+[[ -r "$VEDUP_ROOT/mise.toml" ]] && export MISE_CONFIG_FILE="$VEDUP_ROOT/mise.toml"
 
 if (( $+commands[nvim] )); then
   export GIT_EDITOR=nvim

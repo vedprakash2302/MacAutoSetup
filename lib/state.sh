@@ -1,0 +1,308 @@
+#!/usr/bin/env bash
+# shellcheck disable=SC2034
+
+# Vedup state is data, never shell code. Every file in this directory is a
+# validated TSV document so a corrupted or malicious state file cannot execute.
+
+VEDUP_STATE_DIR="${VEDUP_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/vedup}"
+VEDUP_LEGACY_STATE_DIR="${VEDUP_LEGACY_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/macautosetup}"
+VEDUP_STATE_FILE="$VEDUP_STATE_DIR/state.tsv"
+VEDUP_LIVE_RESOURCES_FILE="$VEDUP_STATE_DIR/resources.tsv"
+VEDUP_RESOURCES_FILE="${VEDUP_RESOURCES_CANDIDATE:-$VEDUP_LIVE_RESOURCES_FILE}"
+VEDUP_TRANSACTIONS_DIR="$VEDUP_STATE_DIR/transactions"
+
+STATE_FOUND=0
+STATE_MIGRATED=0
+STATE_STATUS=""
+STATE_RELEASE=""
+STATE_COMMIT=""
+STATE_PLATFORM=""
+STATE_DISTRO=""
+STATE_PROFILE=""
+STATE_WITH_AWS=0
+STATE_WITH_DOCKER=0
+STATE_WITH_PERSONAL_APPS=0
+STATE_APPLY_MACOS_DEFAULTS=0
+STATE_MINIMAL_DOCK=0
+STATE_KEYBOARD_SHORTCUTS=0
+STATE_EXPERIMENTAL_MACOS_DEFAULTS=0
+STATE_CHANGE_SHELL=0
+STATE_STOW_PACKAGES=""
+STATE_WORKFLOW="fresh"
+VEDUP_TRANSACTION_ID=""
+VEDUP_TRANSACTION_DIR=""
+VEDUP_LEGACY_MIGRATION_FILE=""
+VEDUP_INTERRUPTED_TRANSACTION_DIR=""
+
+state_valid_scalar() {
+  [[ "$1" != *$'\t'* && "$1" != *$'\n'* && "$1" != *$'\r'* ]]
+}
+
+state_valid_bool() {
+  [[ "$1" == "0" || "$1" == "1" ]]
+}
+
+state_assign() {
+  local key="$1" value="$2"
+  state_valid_scalar "$value" || return 1
+  case "$key" in
+    schema) [[ "$value" == "1" ]] || return 1 ;;
+    status) [[ "$value" == "complete" || "$value" == "pending" ]] || return 1; STATE_STATUS="$value" ;;
+    release) [[ "$value" == legacy || "$value" == development || "$value" =~ ^v[0-9A-Za-z._+-]+$ ]] || return 1; STATE_RELEASE="$value" ;;
+    commit) [[ "$value" == unknown || "$value" =~ ^[0-9a-f]{7,40}$ ]] || return 1; STATE_COMMIT="$value" ;;
+    platform) [[ "$value" == "macos" || "$value" == "linux" ]] || return 1; STATE_PLATFORM="$value" ;;
+    distro) [[ "$value" =~ ^[A-Za-z0-9._+-]*$ ]] || return 1; STATE_DISTRO="$value" ;;
+    profile) [[ "$value" == "server" || "$value" == "workstation" ]] || return 1; STATE_PROFILE="$value" ;;
+    with_aws) state_valid_bool "$value" || return 1; STATE_WITH_AWS="$value" ;;
+    with_docker) state_valid_bool "$value" || return 1; STATE_WITH_DOCKER="$value" ;;
+    with_personal_apps) state_valid_bool "$value" || return 1; STATE_WITH_PERSONAL_APPS="$value" ;;
+    apply_macos_defaults) state_valid_bool "$value" || return 1; STATE_APPLY_MACOS_DEFAULTS="$value" ;;
+    minimal_dock) state_valid_bool "$value" || return 1; STATE_MINIMAL_DOCK="$value" ;;
+    keyboard_shortcuts) state_valid_bool "$value" || return 1; STATE_KEYBOARD_SHORTCUTS="$value" ;;
+    experimental_macos_defaults) state_valid_bool "$value" || return 1; STATE_EXPERIMENTAL_MACOS_DEFAULTS="$value" ;;
+    apply_minimal_dock) state_valid_bool "$value" || return 1; STATE_MINIMAL_DOCK="$value" ;;
+    apply_keyboard_remap|apply_keyboard_shortcuts) state_valid_bool "$value" || return 1; STATE_KEYBOARD_SHORTCUTS="$value" ;;
+    apply_open_command) state_valid_bool "$value" || return 1 ;;
+    change_shell) state_valid_bool "$value" || return 1; STATE_CHANGE_SHELL="$value" ;;
+    stow_packages)
+      [[ "$value" =~ ^[a-z0-9._+-]+([[:space:]][a-z0-9._+-]+)*$ ]] || return 1
+      STATE_STOW_PACKAGES="$value"
+      ;;
+    migrated_from) : ;;
+    *) return 1 ;;
+  esac
+}
+
+state_load() {
+  local file="${1:-$VEDUP_STATE_FILE}" key value extra seen="" required
+  STATE_FOUND=0
+  STATE_STATUS="" STATE_RELEASE="" STATE_COMMIT="" STATE_PLATFORM="" STATE_DISTRO="" STATE_PROFILE=""
+  STATE_WITH_AWS=0 STATE_WITH_DOCKER=0 STATE_WITH_PERSONAL_APPS=0 STATE_APPLY_MACOS_DEFAULTS=0
+  STATE_MINIMAL_DOCK=0 STATE_KEYBOARD_SHORTCUTS=0 STATE_EXPERIMENTAL_MACOS_DEFAULTS=0 STATE_CHANGE_SHELL=0
+  STATE_STOW_PACKAGES=""
+  [[ -f "$file" ]] || return 1
+  while IFS=$'\t' read -r key value extra || [[ -n "$key$value$extra" ]]; do
+    [[ -n "$key" && -z "$extra" ]] || return 2
+    case " $seen " in *" $key "*) return 2 ;; esac
+    state_assign "$key" "$value" || return 2
+    seen="$seen $key"
+  done < "$file"
+  for required in schema status release commit platform distro profile with_aws with_docker with_personal_apps \
+    apply_macos_defaults minimal_dock keyboard_shortcuts experimental_macos_defaults change_shell stow_packages; do
+    case " $seen " in *" $required "*) ;; *) return 2 ;; esac
+  done
+  STATE_FOUND=1
+  return 0
+}
+
+state_legacy_value() {
+  local key="$1" file="$2" raw
+  raw="$(sed -n "s/^${key}=//p" "$file" | tail -n 1)"
+  [[ "$raw" =~ ^[A-Za-z0-9._+\\\ -]*$ ]] || return 1
+  raw="${raw//\\ / }"
+  printf '%s' "$raw"
+}
+
+state_migrate_legacy() {
+  local legacy_file="$VEDUP_LEGACY_STATE_DIR/install.env" value
+  [[ ! -e "$VEDUP_STATE_FILE" && -f "$legacy_file" ]] || return 1
+  if [ -n "$VEDUP_LEGACY_MIGRATION_FILE" ] && [ -f "$VEDUP_LEGACY_MIGRATION_FILE" ]; then
+    state_load "$VEDUP_LEGACY_MIGRATION_FILE" || return 1
+    STATE_MIGRATED=1
+    return 0
+  fi
+  VEDUP_LEGACY_MIGRATION_FILE="$(mktemp "${TMPDIR:-/tmp}/vedup-legacy-state.XXXXXX")"
+  {
+    printf 'schema\t1\nstatus\tcomplete\nrelease\tlegacy\ncommit\tunknown\n'
+    printf 'platform\t%s\n' "$(state_legacy_value PLATFORM "$legacy_file" || printf linux)"
+    printf 'distro\t%s\n' "$(state_legacy_value DISTRO "$legacy_file" || true)"
+    printf 'profile\t%s\n' "$(state_legacy_value PROFILE "$legacy_file" || printf server)"
+    for key in WITH_AWS WITH_DOCKER WITH_PERSONAL_APPS APPLY_MACOS_DEFAULTS CHANGE_SHELL; do
+      value="$(state_legacy_value "$key" "$legacy_file" || printf 0)"
+      state_valid_bool "$value" || value=0
+      printf '%s\t%s\n' "$(printf '%s' "$key" | tr '[:upper:]' '[:lower:]')" "$value"
+    done
+    printf 'minimal_dock\t0\nkeyboard_shortcuts\t0\nexperimental_macos_defaults\t0\n'
+    value="$(state_legacy_value STOW_PACKAGES "$legacy_file" || printf 'zsh nvim tmux ghostty')"
+    [[ "$value" =~ ^[a-z0-9._+-]+([[:space:]][a-z0-9._+-]+)*$ ]] || value="zsh nvim tmux ghostty"
+    printf 'stow_packages\t%s\n' "$value"
+    printf 'migrated_from\t%s\n' "$legacy_file"
+  } > "$VEDUP_LEGACY_MIGRATION_FILE"
+  state_load "$VEDUP_LEGACY_MIGRATION_FILE" || return 1
+  STATE_MIGRATED=1
+  return 0
+}
+
+state_cleanup() {
+  case "${VEDUP_LEGACY_MIGRATION_FILE:-}" in
+    "${TMPDIR:-/tmp}"/vedup-legacy-state.*) rm -f "$VEDUP_LEGACY_MIGRATION_FILE" ;;
+  esac
+  VEDUP_LEGACY_MIGRATION_FILE=""
+}
+
+state_find_interrupted() {
+  local journal="" candidate last_status
+  [[ -d "$VEDUP_TRANSACTIONS_DIR" ]] || return 1
+  for candidate in "$VEDUP_TRANSACTIONS_DIR"/*/journal.tsv; do
+    [ -f "$candidate" ] || continue
+    if [ -z "$journal" ] || [ "$candidate" -nt "$journal" ]; then journal="$candidate"; fi
+  done
+  [ -n "$journal" ] || return 1
+  last_status="$(tail -n 1 "$journal" | awk -F '\t' '{print $2}')"
+  if [[ "$last_status" != complete && "$last_status" != rolled-back ]]; then
+    VEDUP_INTERRUPTED_TRANSACTION_DIR="$(dirname "$journal")"
+    return 0
+  fi
+  return 1
+}
+
+state_validate_resources() {
+  local file="${1:-$VEDUP_RESOURCES_FILE}" action id provider owner current desired description count=0
+  [ -r "$file" ] || return 1
+  while IFS=$'\t' read -r action id provider owner current desired description; do
+    [[ "$action" =~ ^(install|update|keep|configure|review|conflict)$ ]] || return 1
+    [[ "$id" =~ ^[A-Za-z0-9._:+/-]+$ && "$provider" =~ ^[A-Za-z0-9._:+/-]+$ ]] || return 1
+    [[ "$owner" =~ ^(vedup-managed|external|unmanaged-conflict)$ ]] || return 1
+    [ -n "$current" ] && [ -n "$desired" ] && [ -n "$description" ] || return 1
+    count=$((count + 1))
+  done < "$file"
+  [ "$count" -gt 0 ]
+}
+
+state_detect_workflow() {
+  if state_find_interrupted; then
+    state_load "$VEDUP_INTERRUPTED_TRANSACTION_DIR/candidate-state.tsv" 2>/dev/null || \
+      state_load "$VEDUP_STATE_FILE" 2>/dev/null || \
+      state_migrate_legacy || true
+    if state_validate_resources "$VEDUP_INTERRUPTED_TRANSACTION_DIR/candidate-resources.tsv" 2>/dev/null; then
+      VEDUP_RESOURCES_FILE="$VEDUP_INTERRUPTED_TRANSACTION_DIR/candidate-resources.tsv"
+    fi
+    STATE_WORKFLOW="interrupted"
+  elif state_load "$VEDUP_STATE_FILE" 2>/dev/null; then
+    if state_validate_resources "$VEDUP_LIVE_RESOURCES_FILE" 2>/dev/null; then
+      VEDUP_RESOURCES_FILE="$VEDUP_LIVE_RESOURCES_FILE"
+    fi
+    STATE_WORKFLOW="managed"
+  elif state_migrate_legacy; then
+    STATE_WORKFLOW="managed"
+  elif type inventory_machine_has_baseline >/dev/null 2>&1 && inventory_machine_has_baseline; then
+    STATE_WORKFLOW="existing"
+  else
+    STATE_WORKFLOW="fresh"
+  fi
+}
+
+state_begin_transaction() {
+  local now
+  now="$(date -u +%Y%m%dT%H%M%SZ)"
+  VEDUP_TRANSACTION_ID="${now}-$$"
+  VEDUP_TRANSACTION_DIR="$VEDUP_TRANSACTIONS_DIR/$VEDUP_TRANSACTION_ID"
+  mkdir -p "$VEDUP_TRANSACTION_DIR"
+  if [ "$STATE_MIGRATED" = 1 ]; then
+    local ledger
+    mkdir -p "$VEDUP_STATE_DIR"
+    for ledger in backups.list macos-preferences.list; do
+      if [[ -f "$VEDUP_LEGACY_STATE_DIR/$ledger" && ! -e "$VEDUP_STATE_DIR/$ledger" ]]; then
+        cp "$VEDUP_LEGACY_STATE_DIR/$ledger" "$VEDUP_STATE_DIR/$ledger"
+      fi
+    done
+  fi
+  : > "$VEDUP_TRANSACTION_DIR/journal.tsv"
+  state_journal transaction running "Vedup synchronization started"
+}
+
+state_journal() {
+  local stage="$1" status="$2" detail="${3:-}"
+  [[ -n "$VEDUP_TRANSACTION_DIR" ]] || return 0
+  detail="${detail//$'\t'/ }"
+  detail="${detail//$'\n'/ }"
+  printf '%s\t%s\t%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$status" "$stage" "$detail" >> "$VEDUP_TRANSACTION_DIR/journal.tsv"
+}
+
+state_write_candidate() {
+  local candidate="$VEDUP_TRANSACTION_DIR/candidate-state.tsv" status="${1:-pending}"
+  [ "$status" = pending ] || [ "$status" = complete ] || return 1
+  [[ -n "$VEDUP_TRANSACTION_DIR" ]] || return 1
+  {
+    printf 'schema\t1\nstatus\t%s\n' "$status"
+    printf 'release\t%s\n' "${VEDUP_RELEASE_REF:-development}"
+    printf 'commit\t%s\n' "${VEDUP_RELEASE_COMMIT:-unknown}"
+    printf 'platform\t%s\ndistro\t%s\nprofile\t%s\n' "$OS" "$DISTRO" "$PROFILE"
+    printf 'with_aws\t%s\nwith_docker\t%s\nwith_personal_apps\t%s\n' "$WITH_AWS" "$WITH_DOCKER" "$WITH_PERSONAL_APPS"
+    printf 'apply_macos_defaults\t%s\nminimal_dock\t%s\nkeyboard_shortcuts\t%s\nexperimental_macos_defaults\t%s\n' \
+      "$APPLY_MACOS_DEFAULTS" "$MINIMAL_DOCK" "$KEYBOARD_SHORTCUTS" "$EXPERIMENTAL_MACOS_DEFAULTS"
+    printf 'change_shell\t%s\nstow_packages\t%s\n' "$CHANGE_SHELL" "${STOW_PACKAGES[*]}"
+  } > "$candidate"
+  state_load "$candidate" >/dev/null || return 1
+  if [[ -n "${PLAN_FILE:-}" && -f "$PLAN_FILE" ]]; then
+    cp "$PLAN_FILE" "$VEDUP_TRANSACTION_DIR/candidate-resources.tsv"
+  fi
+}
+
+state_commit_candidate() {
+  local candidate="$VEDUP_TRANSACTION_DIR/candidate-state.tsv"
+  local resources="$VEDUP_TRANSACTION_DIR/candidate-resources.tsv"
+  local state_tmp="$VEDUP_STATE_DIR/.state.tsv.$$" resources_tmp="$VEDUP_STATE_DIR/.resources.tsv.$$"
+  [[ -f "$candidate" && -f "$resources" ]] || return 1
+  state_load "$candidate" >/dev/null || return 1
+  state_validate_resources "$resources" || return 1
+  mkdir -p "$VEDUP_STATE_DIR"
+  if [ -f "$VEDUP_STATE_FILE" ]; then cp "$VEDUP_STATE_FILE" "$VEDUP_TRANSACTION_DIR/previous-state.tsv"
+  else : > "$VEDUP_TRANSACTION_DIR/previous-state.absent"; fi
+  if [ -f "$VEDUP_LIVE_RESOURCES_FILE" ]; then cp "$VEDUP_LIVE_RESOURCES_FILE" "$VEDUP_TRANSACTION_DIR/previous-resources.tsv"
+  else : > "$VEDUP_TRANSACTION_DIR/previous-resources.absent"; fi
+  cp "$candidate" "$state_tmp"
+  cp "$resources" "$resources_tmp"
+  if ! mv "$resources_tmp" "$VEDUP_LIVE_RESOURCES_FILE" || ! mv "$state_tmp" "$VEDUP_STATE_FILE"; then
+    state_rollback_commit
+    return 1
+  fi
+  state_journal state committed "Validated candidate state installed; release activation is pending"
+}
+
+state_rollback_commit() {
+  local restore_tmp
+  mkdir -p "$VEDUP_STATE_DIR"
+  if [ -f "$VEDUP_TRANSACTION_DIR/previous-state.tsv" ]; then
+    restore_tmp="$VEDUP_STATE_DIR/.state.restore.$$"
+    cp "$VEDUP_TRANSACTION_DIR/previous-state.tsv" "$restore_tmp" && mv "$restore_tmp" "$VEDUP_STATE_FILE"
+  elif [ -f "$VEDUP_TRANSACTION_DIR/previous-state.absent" ]; then
+    rm -f "$VEDUP_STATE_FILE"
+  fi
+  if [ -f "$VEDUP_TRANSACTION_DIR/previous-resources.tsv" ]; then
+    restore_tmp="$VEDUP_STATE_DIR/.resources.restore.$$"
+    cp "$VEDUP_TRANSACTION_DIR/previous-resources.tsv" "$restore_tmp" && mv "$restore_tmp" "$VEDUP_LIVE_RESOURCES_FILE"
+  elif [ -f "$VEDUP_TRANSACTION_DIR/previous-resources.absent" ]; then
+    rm -f "$VEDUP_LIVE_RESOURCES_FILE"
+  fi
+  rm -f "$VEDUP_STATE_DIR/.state.tsv.$$" "$VEDUP_STATE_DIR/.resources.tsv.$$"
+  state_journal state rolled-back "Live state restored because release activation failed"
+}
+
+state_complete_transaction() {
+  state_journal transaction complete "State committed and release activated after doctor"
+}
+
+state_resource_owner() {
+  local resource="$1" action id provider owner current desired description candidate
+  state_validate_resources "$VEDUP_RESOURCES_FILE" || return 1
+  while IFS=$'\t' read -r action id provider owner current desired description; do
+    candidate="$id"
+    [ "$candidate" = "$resource" ] || [ "$candidate" = "retained:$resource" ] || continue
+    printf '%s' "$owner"
+    return 0
+  done < "$VEDUP_RESOURCES_FILE"
+  return 1
+}
+
+state_resource_desired() {
+  local resource="$1" action id provider owner current desired description candidate
+  state_validate_resources "$VEDUP_RESOURCES_FILE" || return 1
+  while IFS=$'\t' read -r action id provider owner current desired description; do
+    candidate="$id"
+    [ "$candidate" = "$resource" ] || [ "$candidate" = "retained:$resource" ] || continue
+    printf '%s' "$desired"
+    return 0
+  done < "$VEDUP_RESOURCES_FILE"
+  return 1
+}

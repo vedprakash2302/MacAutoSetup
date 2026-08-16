@@ -1,0 +1,91 @@
+name: Disposable machine canary
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Commit or release candidate to exercise
+        required: true
+        default: main
+
+permissions:
+  contents: read
+
+jobs:
+  safe-sync-twice:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+      - name: Run terminal-profile canary
+        run: ./bin/setup --non-interactive --profile server --no-macos-defaults --no-shell-change
+      - name: Assert the second synchronization is a no-op
+        run: |
+          output="$(./bin/setup --non-interactive --profile server --no-macos-defaults --no-shell-change)"
+          grep -q 'already synchronized; no changes were made' <<< "$output"
+
+  legacy-f676941-upgrade:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
+      - name: Install isolated migration-test dependencies
+        run: |
+          if [[ "$RUNNER_OS" == Linux ]]; then
+            sudo apt-get update
+            sudo apt-get install -y stow zsh
+          else
+            brew install stow
+          fi
+      - name: Create an f676941 managed installation
+        run: |
+          legacy_root="$HOME/.local/share/macautosetup/repo"
+          mkdir -p "$(dirname "$legacy_root")"
+          git worktree add --detach "$legacy_root" f676941
+          "$legacy_root/bin/setup" \
+            --dotfiles-only --skip-plugins --no-shell-change --no-verify
+          test -r "$HOME/.local/state/macautosetup/install.env"
+      - name: Migrate it and require a no-op second synchronization
+        run: |
+          VEDUP_PENDING_RELEASE="$PWD" \
+          VEDUP_CURRENT_LINK="$HOME/.local/share/vedup/current" \
+            ./bin/setup --dotfiles-only --skip-plugins --no-shell-change --no-verify
+          test -r "$HOME/.local/state/vedup/state.tsv"
+          test -d "$HOME/.local/share/macautosetup/repo"
+          output="$(./bin/setup --dotfiles-only --skip-plugins --no-shell-change --no-verify)"
+          grep -q 'already synchronized; no changes were made' <<< "$output"
+
+  amazon-linux-safe-sync-twice:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ["amazonlinux:2", "amazonlinux:2023"]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+      - name: Run an additive synchronization twice in a disposable container
+        env:
+          CANARY_IMAGE: ${{ matrix.image }}
+        run: |
+          docker run --rm \
+            --env HOME=/root \
+            --env USER=root \
+            --volume "$PWD:/vedup:ro" \
+            "$CANARY_IMAGE" /bin/bash -lc '
+              /vedup/bin/setup --non-interactive --profile server --no-macos-defaults --no-shell-change
+              output="$(/vedup/bin/setup --non-interactive --profile server --no-macos-defaults --no-shell-change)"
+              grep -q "already synchronized; no changes were made" <<< "$output"
+            '

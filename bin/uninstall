@@ -3,8 +3,9 @@
 set -Eeuo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-STATE_FILE="${XDG_STATE_HOME:-$HOME/.local/state}/macautosetup/install.env"
-BACKUP_LIST="${XDG_STATE_HOME:-$HOME/.local/state}/macautosetup/backups.list"
+# shellcheck disable=SC1091
+. "$REPO_ROOT/lib/state.sh"
+BACKUP_LIST="$VEDUP_STATE_DIR/backups.list"
 RESTORE=0
 case "$#:${1:-}" in
   0:) ;;
@@ -12,20 +13,16 @@ case "$#:${1:-}" in
   *) printf 'Usage: bin/uninstall [--restore-backup]\n' >&2; exit 2 ;;
 esac
 
-[ -r "$STATE_FILE" ] || { printf 'No Vedup installation state was found.\n' >&2; exit 1; }
-# shellcheck disable=SC1090
-. "$STATE_FILE"
+state_load "$VEDUP_STATE_FILE" || { printf 'No valid Vedup installation state was found.\n' >&2; exit 1; }
 
-read -r -a packages <<< "$STOW_PACKAGES"
+read -r -a packages <<< "$STATE_STOW_PACKAGES"
 for package in "${packages[@]}"; do
   stow --no-folding --delete --target="$HOME" --dir="$REPO_ROOT/dotfiles" "$package" || true
 done
 
 if [ "$RESTORE" = 1 ] && [ -r "$BACKUP_LIST" ]; then
   backup_dirs=()
-  while IFS= read -r backup_dir; do
-    [ -n "$backup_dir" ] && backup_dirs+=("$backup_dir")
-  done < "$BACKUP_LIST"
+  while IFS= read -r backup_dir; do [ -n "$backup_dir" ] && backup_dirs+=("$backup_dir"); done < "$BACKUP_LIST"
   for ((index=0; index < ${#backup_dirs[@]}; index++)); do
     backup_dir="${backup_dirs[$index]}"
     [ -d "$backup_dir" ] || continue
@@ -42,5 +39,5 @@ if [ "$RESTORE" = 1 ] && [ -r "$BACKUP_LIST" ]; then
   done
 fi
 
-rm -f "$STATE_FILE"
-printf 'Vedup dotfile links were removed. Installed packages were left untouched.\n'
+rm -f "$VEDUP_STATE_FILE" "$VEDUP_RESOURCES_FILE"
+printf 'Vedup configuration links were removed. Installed software and legacy recovery sources were left untouched.\n'

@@ -21,8 +21,8 @@ vedup_prepare_init_cache() {
   [[ "${VEDUP_ZSH_REFRESH_CACHE:-0}" == 1 ]] && refresh=1
   for dependency in \
     "$HOME/.zsh.d/init-cache.sh" \
-    "${MACAUTOSETUP_ROOT:-}/mise.toml" \
-    "${MACAUTOSETUP_ROOT:-}/mise.lock"; do
+    "${VEDUP_ROOT:-}/mise.toml" \
+    "${VEDUP_ROOT:-}/mise.lock"; do
     [[ -n "$dependency" && -e "$dependency" && "$dependency" -nt "$cache_file" ]] && refresh=1
   done
 

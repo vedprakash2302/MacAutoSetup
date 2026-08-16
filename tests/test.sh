@@ -4,9 +4,20 @@ set -Eeuo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TEST_ROOT="$(mktemp -d)"
+unset XDG_STATE_HOME XDG_DATA_HOME XDG_CACHE_HOME
+HOME="$TEST_ROOT/default-home"
+export HOME
+mkdir -p "$HOME"
+VEDUP_TEST_INVENTORY_FILE="$TEST_ROOT/inventory-empty.tsv"
+: > "$VEDUP_TEST_INVENTORY_FILE"
+export VEDUP_TEST_INVENTORY_FILE
 
 pass() { printf '[test] PASS: %s\n' "$*"; }
 fail() { printf '[test] FAIL: %s\n' "$*" >&2; exit 1; }
+test_sha256() {
+  if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | awk '{print $1}'
+  else shasum -a 256 "$1" | awk '{print $1}'; fi
+}
 
 syntax_checks() {
   while IFS= read -r script; do bash -n "$script"; done < <(
@@ -60,6 +71,12 @@ PY
   done
   pass "Zsh plugin pins"
 
+  grep -Fq '/vedup/current' "$REPO_ROOT/dotfiles/zsh/.zsh.d/env.sh" || \
+    fail "Zsh still defaults to the mutable legacy checkout instead of the active Vedup release"
+  if grep -Fq '/macautosetup/repo' "$REPO_ROOT/dotfiles/zsh/.zsh.d/env.sh"; then
+    fail "Zsh still loads Mise configuration from the legacy checkout"
+  fi
+
   for checksum in "$GUM_SHA_LINUX_X64" "$GUM_SHA_LINUX_ARM64" \
     "$GUM_SHA_MACOS_X64" "$GUM_SHA_MACOS_ARM64" \
     "$EZA_SHA_LINUX_X64" "$EZA_SHA_LINUX_ARM64"; do
@@ -112,6 +129,69 @@ macos_settings_safety() {
   pass "macOS preference safety and opt-ins"
 }
 
+macos_preference_rollback() {
+  local fake_bin="$TEST_ROOT/macos-rollback-bin" test_home="$TEST_ROOT/macos-rollback-home"
+  local defaults_log="$TEST_ROOT/macos-defaults.log" write_count="$TEST_ROOT/macos-write-count"
+  local rollback_file="$TEST_ROOT/macos-parent-rollback" backup_dir real_uname
+  mkdir -p "$fake_bin" "$test_home"
+  real_uname="$(command -v uname)"
+
+  cat > "$fake_bin/uname" <<EOF
+#!/usr/bin/env bash
+if [ "\${1:-}" = -s ]; then printf 'Darwin\n'; else exec "$real_uname" "\$@"; fi
+EOF
+  cat > "$fake_bin/defaults" <<'EOF'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+scope=user
+if [ "${1:-}" = -currentHost ]; then scope=host; shift; fi
+command_name="${1:-}"; shift || true
+printf '%s|%s|%s\n' "$scope" "$command_name" "$*" >> "$VEDUP_FAKE_DEFAULTS_LOG"
+case "$command_name" in
+  export)
+    destination="${2:--}"
+    plist='<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict/></plist>'
+    if [ "$destination" = - ]; then printf '%s\n' "$plist"; else printf '%s\n' "$plist" > "$destination"; fi
+    ;;
+  read) exit 1 ;;
+  write)
+    count="$(sed -n '1p' "$VEDUP_FAKE_WRITE_COUNT" 2>/dev/null || printf 0)"
+    count=$((count + 1))
+    printf '%s\n' "$count" > "$VEDUP_FAKE_WRITE_COUNT"
+    if [ "$count" -eq "${VEDUP_FAKE_FAIL_WRITE:-0}" ]; then exit 73; fi
+    ;;
+  import|delete) : ;;
+esac
+EOF
+  chmod +x "$fake_bin/uname" "$fake_bin/defaults"
+
+  if PATH="$fake_bin:$PATH" HOME="$test_home" MACAUTOSETUP_TEST_OS=macos \
+    VEDUP_FAKE_DEFAULTS_LOG="$defaults_log" VEDUP_FAKE_WRITE_COUNT="$write_count" \
+    VEDUP_FAKE_FAIL_WRITE=3 VEDUP_MACOS_ROLLBACK_FILE="$rollback_file" \
+    "$REPO_ROOT/dotfiles/macos/setup-commands.sh" >/dev/null 2>&1; then
+    fail "an injected macOS preference write failure unexpectedly succeeded"
+  fi
+  [ ! -e "$rollback_file" ] || fail "immediate preference rollback left its parent marker armed"
+  grep -q '|import|' "$defaults_log" || fail "immediate preference failure did not restore exported domains"
+  grep -q '|delete|' "$defaults_log" || fail "immediate preference failure did not remove newly introduced keys"
+  backup_dir="$(tail -n 1 "$test_home/.local/state/vedup/macos-preferences.list")"
+  [ -r "$backup_dir/keys.tsv" ] || fail "macOS preference backup omitted touched-key existence metadata"
+
+  : > "$defaults_log"
+  printf '%s\n' "$backup_dir" > "$rollback_file"
+  if PATH="$fake_bin:$PATH" HOME="$test_home" VEDUP_STATE_DIR="$test_home/.local/state/vedup" \
+    VEDUP_MACOS_ROLLBACK_FILE="$rollback_file" VEDUP_FAKE_DEFAULTS_LOG="$defaults_log" \
+    VEDUP_FAKE_WRITE_COUNT="$write_count" REPO_ROOT="$REPO_ROOT" bash -c '
+      source "$REPO_ROOT/lib/common.sh"
+      false
+      setup_cleanup
+    ' >/dev/null 2>&1; then
+    fail "the simulated post-preference health failure unexpectedly succeeded"
+  fi
+  grep -q '|import|' "$defaults_log" || fail "post-configuration failure did not restore macOS preferences"
+  pass "macOS preference rollback before and after health verification"
+}
+
 dry_run_matrix() {
   local target os distro arch profile mac_intel_output linux_output progress_output no_color_output
   for target in 'linux ubuntu x64 server' 'linux ubuntu arm64 server' 'linux amzn x64 server' 'linux amzn arm64 server' 'macos macos x64 workstation' 'macos macos arm64 workstation'; do
@@ -124,7 +204,8 @@ dry_run_matrix() {
   mac_intel_output="$(HOME="$TEST_ROOT/mac-intel-routing" MACAUTOSETUP_TEST_OS=macos \
     MACAUTOSETUP_TEST_ARCH=x64 "$REPO_ROOT/bin/setup" --dry-run --no-shell-change --no-verify --skip-plugins 2>&1)"
   [[ "$mac_intel_output" == *"brew install fd git-delta"* ]] || fail "Intel macOS fallback tools are not routed through Homebrew"
-  [[ "$mac_intel_output" == *"brew install git stow tmux btop eza"* ]] || fail "macOS eza is not routed through Homebrew"
+  [[ "$mac_intel_output" == *"brew install stow tmux btop eza"* ]] || fail "macOS eza is not routed through Homebrew"
+  [[ "$mac_intel_output" != *"brew install git"* ]] || fail "safe sync attempted to install Homebrew Git"
   linux_output="$(HOME="$TEST_ROOT/linux-routing" MACAUTOSETUP_TEST_OS=linux MACAUTOSETUP_TEST_DISTRO=ubuntu \
     MACAUTOSETUP_TEST_ARCH=x64 "$REPO_ROOT/bin/setup" --dry-run --no-shell-change --no-verify --skip-plugins 2>&1)"
   [[ "$linux_output" == *" btop"* ]] || fail "Linux btop is not routed through Mise"
@@ -133,10 +214,10 @@ dry_run_matrix() {
   progress_output="$(HOME="$TEST_ROOT/progress" MACAUTOSETUP_TEST_OS=linux MACAUTOSETUP_TEST_DISTRO=ubuntu \
     MACAUTOSETUP_TEST_ARCH=x64 "$REPO_ROOT/bin/setup" --profile server --with-docker --dry-run \
       --no-shell-change --no-verify --skip-plugins 2>&1)"
-  [[ "$progress_output" == *"[1/8] Preparing the machine"* ]] || fail "friendly progress does not start at the expected stage"
-  [[ "$progress_output" == *"[8/8] Finalizing the login shell"* ]] || fail "friendly progress stage count is incorrect"
-  [[ "$progress_output" == *"8 stage(s) previewed; no machine changes were made."* ]] || \
-    fail "dry-run completion summary is missing or inaccurate"
+  [[ "$progress_output" == *"Installing missing foundations"* ]] || fail "adaptive progress omitted a planned foundation stage"
+  [[ "$progress_output" == *"Synchronizing configuration"* ]] || fail "adaptive progress omitted a planned configuration stage"
+  [[ "$progress_output" == *"stage(s) previewed; no machine changes were made."* ]] || \
+    fail "dry-run completion summary is missing"
   no_color_output="$(NO_COLOR=1 HOME="$TEST_ROOT/no-color" MACAUTOSETUP_TEST_OS=linux \
     MACAUTOSETUP_TEST_DISTRO=ubuntu MACAUTOSETUP_TEST_ARCH=x64 "$REPO_ROOT/bin/setup" --profile server \
       --dry-run --no-shell-change --no-verify --skip-plugins 2>&1)"
@@ -152,7 +233,8 @@ interactive_installer() {
   if [[ "$mac_output" != *"Detected: macOS "* ]] || [[ "$mac_output" != *" / arm64"* ]]; then
     fail "interactive installer did not describe the detected Mac"
   fi
-  [[ "$mac_output" == *"SETUP_ARGS --profile workstation --macos-defaults"* ]] || \
+  [[ "$mac_output" == *"SETUP_ARGS --profile workstation"* && "$mac_output" == *"--macos-defaults"* && \
+    "$mac_output" == *"--without-aws"* && "$mac_output" == *"--shell-change"* ]] || \
     fail "recommended Mac selections did not map to stable setup arguments"
   [[ "$mac_output" == *"▲ ADVANCED — Experimental macOS preferences"* ]] || \
     fail "interactive installer does not explain experimental settings"
@@ -160,7 +242,8 @@ interactive_installer() {
   linux_output="$(MACAUTOSETUP_TEST_OS=linux MACAUTOSETUP_TEST_ARCH=x64 MACAUTOSETUP_TEST_DISTRO=ubuntu \
     MACAUTOSETUP_TEST_CHOICES='yes|yes|no' MACAUTOSETUP_NO_GUM_DOWNLOAD=1 \
     MACAUTOSETUP_INSTALLER_PRINT_ARGS=1 "$REPO_ROOT/bin/install" 2>&1)"
-  [[ "$linux_output" == *"SETUP_ARGS --profile server --with-aws --with-docker --no-shell-change"* ]] || \
+  [[ "$linux_output" == *"SETUP_ARGS --profile server --with-aws --with-docker"* && \
+    "$linux_output" == *"--without-personal-apps"* && "$linux_output" == *"--no-shell-change"* ]] || \
     fail "Linux interactive selections did not map to setup arguments"
   [[ "$linux_output" == *"Vedup"* && "$linux_output" == *"Nice to meet you! Let's set your machine up!"* ]] || \
     fail "interactive installer does not show the Vedup welcome"
@@ -173,7 +256,8 @@ interactive_installer() {
   custom_output="$(MACAUTOSETUP_TEST_OS=macos MACAUTOSETUP_TEST_ARCH=x64 \
     MACAUTOSETUP_TEST_CHOICES='custom|no|yes|no|no|no|no|yes' MACAUTOSETUP_NO_GUM_DOWNLOAD=1 \
     MACAUTOSETUP_INSTALLER_PRINT_ARGS=1 "$REPO_ROOT/bin/setup" --interactive 2>&1)"
-  [[ "$custom_output" == *"SETUP_ARGS --profile server --macos-defaults"* ]] || \
+  [[ "$custom_output" == *"SETUP_ARGS --profile server"* && "$custom_output" == *"--macos-defaults"* && \
+    "$custom_output" == *"--without-personal-apps"* ]] || \
     fail "custom Mac safe-preference selection was not preserved"
   pass "descriptive interactive installer selection mapping"
 }
@@ -188,7 +272,7 @@ concise_progress() {
   [[ "$concise_output" == *"Concise view: full output is being saved"* ]] || \
     fail "concise installation does not identify its detailed log"
   [[ "$concise_output" == *"Setup complete"* ]] || fail "concise installation did not show its completion summary"
-  concise_log="$(find "$concise_home/.local/state/macautosetup/logs" -type f -name '*.log' -print -quit)"
+  concise_log="$(find "$concise_home/.local/state/vedup/logs" -type f -name '*.log' -print -quit)"
   grep -q '\[setup\] Linking zsh dotfiles' "$concise_log" || fail "concise installation did not retain command output"
 
   activity_output="$(HOME="$activity_home" TERM=xterm-256color MACAUTOSETUP_TEST_COMPACT=1 \
@@ -294,8 +378,8 @@ parallel_and_recovery() {
   : > "$parallel_root/lock-stop"
   wait "$holder_pid"
 
-  mkdir -p "$parallel_root/lock-home/.local/state/macautosetup/setup.lock"
-  printf '99999999\n' > "$parallel_root/lock-home/.local/state/macautosetup/setup.lock/pid"
+  mkdir -p "$parallel_root/lock-home/.local/state/vedup/setup.lock"
+  printf '99999999\n' > "$parallel_root/lock-home/.local/state/vedup/setup.lock/pid"
   HOME="$parallel_root/lock-home" bash -c '
     set -Eeuo pipefail; source "$1"; DRY_RUN=0; setup_lock_acquire; setup_lock_release
   ' _ "$REPO_ROOT/lib/common.sh" || fail "stale setup lock was not recovered"
@@ -419,32 +503,308 @@ zsh_features() {
 
 release_asset() {
   local asset="$TEST_ROOT/bootstrap"
-  sed -e 's/__RELEASE_REF__/v0.0.0/g' \
-    -e 's/__RELEASE_COMMIT__/0000000000000000000000000000000000000000/g' \
+  sed -e 's/__VEDUP_RELEASE_REF__/v0.0.0/g' \
+    -e 's/__VEDUP_RELEASE_COMMIT__/0000000000000000000000000000000000000000/g' \
+    -e 's/__VEDUP_ARCHIVE_SHA256__/0000000000000000000000000000000000000000000000000000000000000000/g' \
     "$REPO_ROOT/bootstrap" > "$asset"
   bash -n "$asset"
-  ! grep -q '__RELEASE_' "$asset" || fail "release bootstrap still contains placeholders"
+  ! grep -q '__VEDUP_' "$asset" || fail "release bootstrap still contains placeholders"
   grep -q 'bin/install' "$asset" || fail "release bootstrap does not route terminal users to the guided installer"
-  grep -q -- '--non-interactive' "$asset" || fail "release bootstrap does not preserve an explicit automation path"
+  ! grep -Eq 'git (clone|fetch|checkout)' "$asset" || fail "release bootstrap still depends on Git"
   pass "release bootstrap rendering"
+}
+
+safe_sync_invariants() {
+  local mac_home="$TEST_ROOT/policy-mac" linux_home="$TEST_ROOT/policy-linux" mac_output linux_output
+  local upgrade_home="$TEST_ROOT/policy-upgrade" upgrade_bin="$TEST_ROOT/policy-upgrade-bin" upgrade_inventory upgrade_output
+  mkdir -p "$mac_home" "$linux_home" "$upgrade_home" "$upgrade_bin"
+  mac_output="$(HOME="$mac_home" MACAUTOSETUP_TEST_OS=macos MACAUTOSETUP_TEST_ARCH=arm64 \
+    "$REPO_ROOT/bin/setup" --profile workstation --dry-run --no-shell-change --no-macos-defaults --skip-plugins 2>&1)"
+  [[ "$mac_output" == *"brew bundle --no-upgrade"* ]] || fail "macOS applications are not planned in no-upgrade mode"
+  [[ "$mac_output" != *"brew install git"* ]] || fail "safe sync planned Homebrew Git"
+  [[ "$mac_output" != *"brew update"* && "$mac_output" != *"brew upgrade"* ]] || \
+    fail "safe sync planned an implicit Homebrew update or upgrade"
+
+  linux_output="$(HOME="$linux_home" MACAUTOSETUP_TEST_OS=linux MACAUTOSETUP_TEST_DISTRO=ubuntu \
+    MACAUTOSETUP_TEST_ARCH=x64 "$REPO_ROOT/bin/setup" --profile server --dry-run --no-shell-change --skip-plugins 2>&1)"
+  [[ "$linux_output" == *"apt-get install -y --no-upgrade"* ]] || fail "Ubuntu packages are not installed in missing-only mode"
+  [[ "$linux_output" != *"apt-get upgrade"* && "$linux_output" != *"apt upgrade"* ]] || fail "safe sync planned a general APT upgrade"
+
+  if grep -R -E -n 'git config (--global )?.*(credential|helper)|(^|[[:space:]])(>|>>).*\.gitconfig|sed -i.*\.gitconfig' \
+      "$REPO_ROOT/bin" "$REPO_ROOT/lib" "$REPO_ROOT/dotfiles" >/dev/null; then
+    fail "Vedup contains a Git credential-helper or .gitconfig mutation"
+  fi
+
+  upgrade_inventory="$TEST_ROOT/policy-upgrade.tsv"
+  printf 'command\tbrew\ncommand\tgit\npackage:cask\tcursor\noutdated-cask\tcursor\n' > "$upgrade_inventory"
+  cat > "$upgrade_bin/brew" <<'EOF'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+case "${1:-}" in
+  shellenv) exit 0 ;;
+  list) exit 0 ;;
+  outdated) [ "${*: -1}" = cursor ] && printf 'cursor\n'; exit 0 ;;
+esac
+exit 0
+EOF
+  chmod +x "$upgrade_bin/brew"
+  upgrade_output="$(HOME="$upgrade_home" PATH="$upgrade_bin:$PATH" VEDUP_TEST_INVENTORY_FILE="$upgrade_inventory" \
+    MACAUTOSETUP_TEST_OS=macos MACAUTOSETUP_TEST_ARCH=arm64 "$REPO_ROOT/bin/setup" --profile workstation \
+      --upgrade-apps --dry-run --no-shell-change --no-macos-defaults --skip-plugins 2>&1)"
+  [[ "$upgrade_output" == *"brew upgrade --cask cursor"* ]] || fail "explicit --upgrade-apps did not plan an outdated GUI update"
+  pass "missing-only provider policy and Git credential invariants"
+}
+
+state_and_resume() {
+  local state_home="$TEST_ROOT/state" malicious_marker="$TEST_ROOT/state-code-executed"
+  local overlay_home overlay_output interrupted_home commit_home mise_home mise_inventory mise_output
+  mkdir -p "$state_home/vedup"
+  cat > "$state_home/vedup/state.tsv" <<'EOF'
+schema	1
+status	complete
+release	v1.0.0
+commit	0000000000000000000000000000000000000000
+platform	linux
+distro	ubuntu
+profile	server
+with_aws	1
+with_docker	0
+with_personal_apps	0
+apply_macos_defaults	0
+minimal_dock	0
+keyboard_shortcuts	0
+experimental_macos_defaults	0
+change_shell	0
+stow_packages	zsh nvim starship tmux scripts
+EOF
+  XDG_STATE_HOME="$state_home" bash -c '
+    set -Eeuo pipefail
+    source "$1/lib/state.sh"
+    state_load
+    [ "$STATE_PROFILE" = server ] && [ "$STATE_WITH_AWS" = 1 ] && [ "$STATE_RELEASE" = v1.0.0 ]
+  ' _ "$REPO_ROOT" || fail "valid TSV state did not load"
+
+  sed "s|^release.*|release\\t\\\$(touch $malicious_marker)|" "$state_home/vedup/state.tsv" > "$state_home/vedup/malicious.tsv"
+  if XDG_STATE_HOME="$state_home" STATE_TEST_FILE="$state_home/vedup/malicious.tsv" bash -c '
+    set -Eeuo pipefail; source "$1/lib/state.sh"; state_load "$STATE_TEST_FILE"
+  ' _ "$REPO_ROOT" >/dev/null 2>&1; then
+    fail "malformed state was accepted"
+  fi
+  [ ! -e "$malicious_marker" ] || fail "state data was executed as shell code"
+
+  legacy_home="$TEST_ROOT/legacy-state"
+  mkdir -p "$legacy_home/macautosetup"
+  cat > "$legacy_home/macautosetup/install.env" <<'EOF'
+PLATFORM=linux
+DISTRO=ubuntu
+PROFILE=server
+WITH_AWS=1
+WITH_DOCKER=0
+WITH_PERSONAL_APPS=0
+APPLY_MACOS_DEFAULTS=0
+CHANGE_SHELL=1
+STOW_PACKAGES=zsh\ nvim\ starship\ tmux\ scripts
+EOF
+  XDG_STATE_HOME="$legacy_home" VEDUP_TEST_INVENTORY_FILE="$VEDUP_TEST_INVENTORY_FILE" bash -c '
+    set -Eeuo pipefail
+    source "$1/lib/common.sh"
+    source "$1/lib/state.sh"
+    state_detect_workflow
+    [ "$STATE_WORKFLOW" = managed ] && [ "$STATE_MIGRATED" = 1 ] && [ "$STATE_WITH_AWS" = 1 ]
+    [ ! -e "$XDG_STATE_HOME/vedup/state.tsv" ]
+  ' _ "$REPO_ROOT" || fail "legacy state was not conservatively staged without pre-confirmation writes"
+
+  interrupted_home="$TEST_ROOT/interrupted-state"
+  mkdir -p "$interrupted_home/vedup/transactions/20260816T000000Z-1"
+  cp "$state_home/vedup/state.tsv" "$interrupted_home/vedup/transactions/20260816T000000Z-1/candidate-state.tsv"
+  mkdir -p "$interrupted_home/vedup"
+  sed 's/^with_aws.*/with_aws\t0/' "$state_home/vedup/state.tsv" > "$interrupted_home/vedup/state.tsv"
+  printf 'keep\tgit\tsystem\texternal\tinstalled\tcompatible\tRetain Git\n' > "$interrupted_home/vedup/resources.tsv"
+  cp "$interrupted_home/vedup/resources.tsv" \
+    "$interrupted_home/vedup/transactions/20260816T000000Z-1/candidate-resources.tsv"
+  printf '2026-08-16T00:00:00Z\tfailed\tpackages\tinjected failure\n' > \
+    "$interrupted_home/vedup/transactions/20260816T000000Z-1/journal.tsv"
+  XDG_STATE_HOME="$interrupted_home" VEDUP_TEST_INVENTORY_FILE="$VEDUP_TEST_INVENTORY_FILE" bash -c '
+    set -Eeuo pipefail
+    source "$1/lib/common.sh"
+    source "$1/lib/state.sh"
+    state_detect_workflow
+    [ "$STATE_WORKFLOW" = interrupted ] && [ "$STATE_PROFILE" = server ] && [ "$STATE_WITH_AWS" = 1 ]
+  ' _ "$REPO_ROOT" || fail "interrupted candidate choices were not recovered"
+
+  overlay_home="$TEST_ROOT/state-overlay"
+  mkdir -p "$overlay_home/vedup"
+  sed 's/^with_docker.*/with_docker\t1/' "$state_home/vedup/state.tsv" > "$overlay_home/vedup/state.tsv"
+  printf 'keep\tgit\tsystem\texternal\tinstalled\tcompatible\tRetain Git\n' > "$overlay_home/vedup/resources.tsv"
+  overlay_output="$(XDG_STATE_HOME="$overlay_home" HOME="$TEST_ROOT/state-overlay-home" \
+    VEDUP_TEST_INVENTORY_FILE="$VEDUP_TEST_INVENTORY_FILE" MACAUTOSETUP_TEST_OS=linux \
+    MACAUTOSETUP_TEST_DISTRO=ubuntu MACAUTOSETUP_TEST_ARCH=x64 "$REPO_ROOT/bin/setup" \
+      --without-aws --dry-run --no-shell-change --no-verify --skip-plugins 2>&1)"
+  [[ "$overlay_output" == *"mise-tool:lazydocker"* && "$overlay_output" != *"mise-tool:aws"* ]] || \
+    fail "an explicit component override discarded unrelated saved choices"
+
+  commit_home="$TEST_ROOT/state-commit"
+  mkdir -p "$commit_home/vedup/transactions/test"
+  cp "$state_home/vedup/state.tsv" "$commit_home/vedup/state.tsv"
+  printf 'keep\tgit\tsystem\texternal\tinstalled\tcompatible\tRetain Git\n' > "$commit_home/vedup/resources.tsv"
+  sed 's/^with_aws.*/with_aws\t0/' "$state_home/vedup/state.tsv" > \
+    "$commit_home/vedup/transactions/test/candidate-state.tsv"
+  cp "$commit_home/vedup/resources.tsv" "$commit_home/vedup/transactions/test/candidate-resources.tsv"
+  : > "$commit_home/vedup/transactions/test/journal.tsv"
+  XDG_STATE_HOME="$commit_home" bash -c '
+    set -Eeuo pipefail
+    source "$1/lib/state.sh"
+    VEDUP_TRANSACTION_DIR="$XDG_STATE_HOME/vedup/transactions/test"
+    state_commit_candidate
+    state_load
+    [ "$STATE_WITH_AWS" = 0 ]
+    state_rollback_commit
+    state_load
+    [ "$STATE_WITH_AWS" = 1 ]
+  ' _ "$REPO_ROOT" || fail "live state was not restored after an activation-style rollback"
+
+  mise_home="$TEST_ROOT/state-mise"
+  mise_inventory="$TEST_ROOT/state-mise-inventory.tsv"
+  mkdir -p "$mise_home/vedup"
+  sed 's/^with_aws.*/with_aws\t0/' "$state_home/vedup/state.tsv" > "$mise_home/vedup/state.tsv"
+  printf 'install\tmise-tool:node\tmise:node\tvedup-managed\tinstalled\t24.18.0\tPinned Node\n' > "$mise_home/vedup/resources.tsv"
+  printf 'command\tmise\ncommand\tnode\n' > "$mise_inventory"
+  mise_output="$(XDG_STATE_HOME="$mise_home" HOME="$TEST_ROOT/state-mise-home" \
+    VEDUP_TEST_INVENTORY_FILE="$mise_inventory" MACAUTOSETUP_TEST_OS=linux \
+    MACAUTOSETUP_TEST_DISTRO=ubuntu MACAUTOSETUP_TEST_ARCH=x64 "$REPO_ROOT/bin/setup" \
+      --dry-run --no-shell-change --no-verify --skip-plugins 2>&1)"
+  [[ "$mise_output" == *"update     mise-tool:node"* ]] || fail "a missing managed Mise version was inferred from a shim"
+  printf 'mise-tool\tnode@24.18.0\n' >> "$mise_inventory"
+  mise_output="$(XDG_STATE_HOME="$mise_home" HOME="$TEST_ROOT/state-mise-home" \
+    VEDUP_TEST_INVENTORY_FILE="$mise_inventory" MACAUTOSETUP_TEST_OS=linux \
+    MACAUTOSETUP_TEST_DISTRO=ubuntu MACAUTOSETUP_TEST_ARCH=x64 "$REPO_ROOT/bin/setup" \
+      --dry-run --no-shell-change --no-verify --skip-plugins 2>&1)"
+  [[ "$mise_output" == *"keep       mise-tool:node"* ]] || fail "an exact managed Mise version was needlessly updated"
+  pass "validated non-executable state, legacy migration, and interrupted-run detection"
+}
+
+release_failure_safety() {
+  local fixture="$TEST_ROOT/release-failure" payload archive checksum rendered fake_bin output_home activation_release activation_current
+  fixture="$TEST_ROOT/release-failure"
+  payload="$fixture/payload/vedup-v9.9.9"
+  archive="$fixture/incomplete.tar.gz"
+  rendered="$fixture/bootstrap"
+  fake_bin="$fixture/bin"
+  output_home="$fixture/home"
+  mkdir -p "$payload" "$fake_bin" "$output_home"
+  printf 'incomplete\n' > "$payload/README"
+  tar -czf "$archive" -C "$fixture/payload" vedup-v9.9.9
+  checksum="$(test_sha256 "$archive")"
+  sed -e 's/__VEDUP_RELEASE_REF__/v9.9.9/g' \
+    -e 's/__VEDUP_RELEASE_COMMIT__/9999999999999999999999999999999999999999/g' \
+    -e "s/__VEDUP_ARCHIVE_SHA256__/$checksum/g" "$REPO_ROOT/bootstrap" > "$rendered"
+  cat > "$fake_bin/curl" <<'EOF'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+output=""
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = --output ]; then output="$2"; shift 2; else shift; fi
+done
+cp "$VEDUP_FAKE_ARCHIVE" "$output"
+EOF
+  chmod +x "$fake_bin/curl" "$rendered"
+  if HOME="$output_home" VEDUP_FAKE_ARCHIVE="$archive" PATH="$fake_bin:/usr/bin:/bin" "$rendered" >/dev/null 2>&1; then
+    fail "an incomplete release archive was accepted"
+  fi
+  [ ! -e "$output_home/.local/share/vedup/current" ] || fail "failed release extraction changed the active release"
+  [ ! -d "$output_home/.local/share/vedup/releases/v9.9.9-999999999999" ] || fail "failed extraction left a completed release"
+
+  activation_release="$fixture/activation/release"
+  activation_current="$fixture/activation/current"
+  mkdir -p "$fixture/activation/old"
+  cp -R "$REPO_ROOT" "$activation_release"
+  ln -s "$fixture/activation/old" "$activation_current"
+  VEDUP_ACTIVATION_RELEASE="$activation_release" VEDUP_ACTIVATION_CURRENT="$activation_current" bash -c '
+    set -Eeuo pipefail
+    set --
+    source "$VEDUP_ACTIVATION_RELEASE/bin/setup"
+    VEDUP_PENDING_RELEASE="$VEDUP_ACTIVATION_RELEASE"
+    VEDUP_CURRENT_LINK="$VEDUP_ACTIVATION_CURRENT"
+    activate_pending_release
+  ' || fail "verified release activation failed"
+  [ "$(readlink "$activation_current")" = "$activation_release" ] || fail "current was not atomically switched to the verified release"
+  pass "checksum-bound release extraction and failure-safe activation"
+}
+
+dotfile_failure_rollback() {
+  local rollback_home="$TEST_ROOT/rollback-home" fake_bin="$TEST_ROOT/rollback-bin" real_stow
+  local doctor_home="$TEST_ROOT/doctor-rollback-home" doctor_repo="$TEST_ROOT/doctor-failure-repo"
+  local activation_home="$TEST_ROOT/activation-rollback-home"
+  mkdir -p "$rollback_home" "$fake_bin" "$doctor_home" "$activation_home"
+  printf 'original-before-failure\n' > "$rollback_home/.zshrc"
+  real_stow="$(command -v stow)"
+  cat > "$fake_bin/stow" <<'EOF'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+arguments=" $* "
+if [[ "$arguments" == *" --restow "* && "$arguments" != *" --simulate "* && "$arguments" == *" nvim "* ]]; then
+  exit 73
+fi
+exec "$VEDUP_REAL_STOW" "$@"
+EOF
+  chmod +x "$fake_bin/stow"
+  if HOME="$rollback_home" PATH="$fake_bin:$PATH" VEDUP_REAL_STOW="$real_stow" \
+    "$REPO_ROOT/bin/setup" --dotfiles-only --skip-plugins --no-shell-change --no-verify >/dev/null 2>&1; then
+    fail "injected Stow failure unexpectedly succeeded"
+  fi
+  [ ! -L "$rollback_home/.zshrc" ] || fail "failed Stow transaction left a managed link"
+  [ "$(sed -n '1p' "$rollback_home/.zshrc")" = original-before-failure ] || fail "failed Stow transaction did not restore the original config"
+  [ ! -e "$rollback_home/.local/state/vedup/state.tsv" ] || fail "failed setup committed live state"
+  grep -R -q $'\tfailed\ttransaction\t' "$rollback_home/.local/state/vedup/transactions" || \
+    fail "failed setup did not persist its transaction journal"
+
+  cp -R "$REPO_ROOT" "$doctor_repo"
+  cat > "$doctor_repo/bin/doctor" <<'EOF'
+#!/usr/bin/env bash
+exit 81
+EOF
+  chmod +x "$doctor_repo/bin/doctor"
+  printf 'original-before-doctor\n' > "$doctor_home/.zshrc"
+  if HOME="$doctor_home" "$doctor_repo/bin/setup" --dotfiles-only --skip-plugins \
+      --no-shell-change --no-verify >/dev/null 2>&1; then
+    fail "an injected post-link doctor failure unexpectedly succeeded"
+  fi
+  [ ! -L "$doctor_home/.zshrc" ] || fail "post-link doctor failure left the new managed link"
+  [ "$(sed -n '1p' "$doctor_home/.zshrc")" = original-before-doctor ] || \
+    fail "post-link doctor failure did not restore the previous configuration"
+
+  printf 'original-before-activation\n' > "$activation_home/.zshrc"
+  if HOME="$activation_home" VEDUP_PENDING_RELEASE="$TEST_ROOT/not-the-running-release" \
+    VEDUP_CURRENT_LINK="$activation_home/.local/share/vedup/current" \
+    "$REPO_ROOT/bin/setup" --dotfiles-only --skip-plugins --no-shell-change --no-verify >/dev/null 2>&1; then
+    fail "an injected release activation failure unexpectedly succeeded"
+  fi
+  [ "$(sed -n '1p' "$activation_home/.zshrc")" = original-before-activation ] || \
+    fail "activation failure did not restore the prior configuration"
+  [ ! -e "$activation_home/.local/state/vedup/state.tsv" ] || \
+    fail "activation failure did not roll back newly committed live state"
+  pass "dotfile failure injection and automatic rollback"
 }
 
 dotfile_lifecycle() {
   command -v stow >/dev/null 2>&1 || fail "GNU Stow is required for the lifecycle test"
-  local test_home="$TEST_ROOT/home" backup_list first_count second_count zsh_output
+  local test_home="$TEST_ROOT/home" backup_list first_count second_count zsh_output second_output state_hash
   mkdir -p "$test_home"
   printf 'original zsh config\n' > "$test_home/.zshrc"
 
   HOME="$test_home" "$REPO_ROOT/bin/setup" --dotfiles-only --skip-plugins --no-shell-change --no-verify >/dev/null
   [ -L "$test_home/.zshrc" ] || fail "setup did not link .zshrc"
-  backup_list="$test_home/.local/state/macautosetup/backups.list"
+  backup_list="$test_home/.local/state/vedup/backups.list"
   [ -s "$backup_list" ] || fail "setup did not record its conflict backup"
   first_count="$(wc -l < "$backup_list" | tr -d ' ')"
+  state_hash="$(test_sha256 "$test_home/.local/state/vedup/state.tsv")"
 
-  HOME="$test_home" "$REPO_ROOT/bin/setup" --dotfiles-only --skip-plugins --no-shell-change --no-verify >/dev/null
+  second_output="$(HOME="$test_home" "$REPO_ROOT/bin/setup" --dotfiles-only --skip-plugins --no-shell-change --no-verify 2>&1)"
+  [[ "$second_output" == *"already synchronized; no changes were made"* ]] || fail "second safe sync was not a no-op"
   second_count="$(wc -l < "$backup_list" | tr -d ' ')"
   [ "$first_count" = "$second_count" ] || fail "idempotent rerun created a spurious backup"
-  find "$test_home/.local/state/macautosetup/logs" -type f -name '*.log' | grep -q . || \
+  [ "$state_hash" = "$(test_sha256 "$test_home/.local/state/vedup/state.tsv")" ] || fail "no-op rerun rewrote state"
+  find "$test_home/.local/state/vedup/logs" -type f -name '*.log' | grep -q . || \
     fail "setup did not retain a detailed installation log"
 
   if command -v zsh >/dev/null 2>&1; then
@@ -466,6 +826,11 @@ administrator_approval
 parallel_and_recovery
 zsh_features
 macos_settings_safety
+macos_preference_rollback
 release_asset
+safe_sync_invariants
+state_and_resume
+release_failure_safety
+dotfile_failure_rollback
 dotfile_lifecycle
 printf '[test] All checks passed. Temporary files: %s\n' "$TEST_ROOT"
