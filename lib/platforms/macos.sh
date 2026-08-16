@@ -16,7 +16,12 @@ platform_prepare() {
     fi
   fi
 
-  if [ -x /opt/homebrew/bin/brew ]; then
+  # Hermetic tests inject a fixture-backed brew on PATH. Do not replace it
+  # with a package manager from the CI host or the test stops representing
+  # the declared machine inventory.
+  if [ -n "${VEDUP_TEST_INVENTORY_FILE:-}" ]; then
+    :
+  elif [ -x /opt/homebrew/bin/brew ]; then
     eval "$(/opt/homebrew/bin/brew shellenv)"
   elif [ -x /usr/local/bin/brew ]; then
     eval "$(/usr/local/bin/brew shellenv)"
