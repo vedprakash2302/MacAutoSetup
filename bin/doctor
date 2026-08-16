@@ -226,7 +226,7 @@ EOF
   done
 fi
 
-if [ "$STATE_FOUND" = 1 ]; then
+if [ "$STATE_FOUND" = 1 ] && [ "$DOTFILES_ONLY" != 1 ]; then
   if [ "$STATE_WITH_AWS" = 1 ]; then
     if command -v aws >/dev/null 2>&1; then ok "optional AWS CLI is available"; else fail "optional AWS CLI is missing"; fi
   fi
