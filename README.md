@@ -26,9 +26,11 @@ bash -c "$(curl -fsSL https://github.com/vedprakash2302/MacAutoSetup/releases/la
 ```
 
 Supported targets are macOS on Intel and Apple Silicon, Ubuntu 22.04/24.04,
-and Amazon Linux 2/2023 on x86_64 or ARM64. A fresh machine needs Bash, curl,
+and Amazon Linux 2023 on x86_64 or ARM64. A fresh machine needs Bash, curl,
 tar, a SHA-256 utility, outbound HTTPS, and administrator access for whichever
 planned resources require it. Git is not a bootstrap dependency.
+Amazon Linux 2 reached end-of-support on June 30, 2026; Vedup refuses to alter
+it and directs the user to migrate to Amazon Linux 2023.
 
 ## What Safe sync means
 
@@ -226,7 +228,8 @@ not need to own, borrow, or wipe another Mac. The workflow performs:
   run on macOS 15 and Ubuntu 24.04;
 - migration from an actual `f676941` dotfile installation on disposable macOS
   and Ubuntu runners, again followed by a no-op run;
-- two-run synchronization inside Amazon Linux 2 and 2023 containers.
+- two-run synchronization inside Amazon Linux 2023, plus a clear rejection
+  check for end-of-support Amazon Linux 2.
 
 GitHub's macOS runner already contains Apple Command Line Tools and Homebrew,
 so the literal factory-fresh installation of those two prerequisites is tested

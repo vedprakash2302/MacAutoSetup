@@ -31,7 +31,7 @@ install_stow_user_local() {
 }
 
 platform_install_foundations() {
-  amazon_pkg ca-certificates curl git gcc gcc-c++ make perl tar gzip tmux unzip xz zsh
+  amazon_pkg ca-certificates curl findutils git gcc gcc-c++ make perl tar gzip tmux unzip xz zsh
   install_stow_user_local
 }
 

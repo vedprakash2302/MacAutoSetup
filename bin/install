@@ -93,6 +93,13 @@ normalize_platform() {
     fi
     PLATFORM_NAME="$distro_name / $ARCH"
     case "$DISTRO" in ubuntu) PLATFORM_ADAPTER=ubuntu ;; amzn) PLATFORM_ADAPTER=amazon ;; *) PLATFORM_ADAPTER="$DISTRO" ;; esac
+    if [ "$DISTRO_VERSION" != test ]; then
+      case "$DISTRO/$DISTRO_VERSION" in
+        ubuntu/22.04|ubuntu/24.04|amzn/2023) ;;
+        amzn/2) die "Amazon Linux 2 reached end-of-support on June 30, 2026. Migrate to Amazon Linux 2023 before running Vedup." ;;
+        *) die "Unsupported Linux release for v1: $DISTRO $DISTRO_VERSION" ;;
+      esac
+    fi
   fi
   columns="$(tput cols 2>/dev/null || true)"
   case "$columns" in
