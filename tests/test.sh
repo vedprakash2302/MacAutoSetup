@@ -226,8 +226,12 @@ dry_run_matrix() {
 }
 
 interactive_installer() {
-  local mac_output linux_output custom_output
-  if ! mac_output="$(MACAUTOSETUP_TEST_OS=macos MACAUTOSETUP_TEST_ARCH=arm64 \
+  local mac_output linux_output custom_output mac_inventory="$TEST_ROOT/interactive-mac-inventory.tsv"
+  # Reaching the GUI-update review with no outdated casks used to expand an
+  # empty array, which fails under the Bash 3.2 shipped by macOS.
+  printf 'command\tbrew\n' > "$mac_inventory"
+  if ! mac_output="$(VEDUP_TEST_INVENTORY_FILE="$mac_inventory" \
+    MACAUTOSETUP_TEST_OS=macos MACAUTOSETUP_TEST_ARCH=arm64 \
     MACAUTOSETUP_TEST_CHOICES='workstation|no|no|no|no|no|yes' MACAUTOSETUP_NO_GUM_DOWNLOAD=1 \
     MACAUTOSETUP_INSTALLER_PRINT_ARGS=1 "$REPO_ROOT/bin/install" 2>&1)"; then
     fail "Mac interactive installer exited unsuccessfully: $mac_output"
