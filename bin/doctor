@@ -212,8 +212,26 @@ EOF
   else
     insecure_completion_dirs="missing:$HOME/.zsh.d/completions.sh"
   fi
-  if [ -z "$insecure_completion_dirs" ]; then ok "Zsh completion directories pass the security audit"
-  else fail "Zsh has insecure completion directories: $(printf '%s' "$insecure_completion_dirs" | tr '\n' ' ')"; fi
+  managed_insecure_completion_dirs=""
+  external_insecure_completion_dirs=""
+  while IFS= read -r insecure_dir; do
+    [ -n "$insecure_dir" ] || continue
+    case "$insecure_dir" in
+      "$HOME"/*|"$zsh_plugin_root"/*)
+        managed_insecure_completion_dirs="${managed_insecure_completion_dirs}${managed_insecure_completion_dirs:+ }$insecure_dir"
+        ;;
+      *)
+        external_insecure_completion_dirs="${external_insecure_completion_dirs}${external_insecure_completion_dirs:+ }$insecure_dir"
+        ;;
+    esac
+  done <<< "$insecure_completion_dirs"
+  if [ -n "$managed_insecure_completion_dirs" ]; then
+    fail "Vedup-managed Zsh completion directories are insecure: $managed_insecure_completion_dirs"
+  elif [ -n "$external_insecure_completion_dirs" ]; then
+    note "External system completion directories failed compaudit and were left unchanged: $external_insecure_completion_dirs"
+  else
+    ok "Zsh completion directories pass the security audit"
+  fi
 
   for integration_name in mise zoxide fzf carapace starship; do
     integration_cache="$zsh_cache_root/init/$integration_name.zsh"

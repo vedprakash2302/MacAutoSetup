@@ -184,6 +184,11 @@ plan_dotfile_parent_status() {
 
 plan_dotfiles() {
   local package package_dir source relative target parent_status changed=0 conflicts=0
+  if ! has find; then
+    plan_add configure dotfiles stow vedup-managed pending-foundations managed-links \
+      "Inspect and link Vedup configuration after the planned findutils installation"
+    return 0
+  fi
   for package in "${STOW_PACKAGES[@]}"; do
     package_dir="$REPO_ROOT/dotfiles/$package"
     [[ -d "$package_dir" ]] || { plan_add conflict "dotfiles:$package" stow unmanaged-conflict missing required "Selected dotfile package is absent"; continue; }
@@ -368,7 +373,7 @@ plan_generate() {
       case "$PLATFORM_ADAPTER" in
         ubuntu) for package in build-essential ca-certificates curl git perl stow tmux unzip xz-utils zsh; do plan_linux_package "$package"; done ;;
         amazon)
-          for package in gcc gcc-c++ make ca-certificates curl git perl tar gzip unzip xz zsh tmux; do plan_linux_package "$package"; done
+          for package in gcc gcc-c++ make ca-certificates curl findutils git perl tar gzip unzip xz zsh tmux; do plan_linux_package "$package"; done
           if inventory_command_exists stow; then
             plan_add keep cli:stow amazon "$(plan_existing_owner cli:stow)" installed compatible "Retain compatible user-local GNU Stow"
           else

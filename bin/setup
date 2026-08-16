@@ -165,9 +165,10 @@ detect_platform() {
       amzn) PLATFORM_ADAPTER=amazon ;;
       *) die "Unsupported Linux distribution for v1: $DISTRO" ;;
     esac
-    if [ -z "${MACAUTOSETUP_TEST_DISTRO:-}" ]; then
+    if [ "$DISTRO_VERSION" != test ]; then
       case "$DISTRO/$DISTRO_VERSION" in
-        ubuntu/22.04|ubuntu/24.04|amzn/2|amzn/2023) ;;
+        ubuntu/22.04|ubuntu/24.04|amzn/2023) ;;
+        amzn/2) die "Amazon Linux 2 reached end-of-support on June 30, 2026. Migrate to Amazon Linux 2023 before running Vedup." ;;
         *) die "Unsupported Linux release for v1: $DISTRO $DISTRO_VERSION" ;;
       esac
     fi

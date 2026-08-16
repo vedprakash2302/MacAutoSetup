@@ -42,10 +42,23 @@ inventory_command_exists() {
 inventory_package_installed() {
   local provider="$1" package="$2" fixture_status
   if inventory_fixture_has "package:$provider" "$package"; then return 0; else fixture_status="$?"; fi
-  [ "$fixture_status" != 1 ] || return 1
+  if [ "$fixture_status" = 1 ]; then
+    if [ "$provider" = amazon ] && [ "$package" = curl ]; then
+      inventory_command_exists curl
+      return
+    fi
+    return 1
+  fi
   case "$provider" in
     ubuntu) dpkg-query -W -f='${Status}' "$package" 2>/dev/null | grep -q 'ok installed' ;;
-    amazon) rpm -q "$package" >/dev/null 2>&1 ;;
+    amazon)
+      if rpm -q "$package" >/dev/null 2>&1; then
+        return 0
+      fi
+      # Amazon Linux 2023 intentionally ships curl-minimal, which provides a
+      # compatible curl command but conflicts with the full curl RPM.
+      [ "$package" = curl ] && inventory_command_exists curl
+      ;;
     formula) brew list --formula "${package##*/}" >/dev/null 2>&1 ;;
     cask) brew list --cask "${package##*/}" >/dev/null 2>&1 ;;
     mas) mas list 2>/dev/null | awk '{print $1}' | grep -Fxq "$package" ;;

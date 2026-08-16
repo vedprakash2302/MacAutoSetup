@@ -71,7 +71,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        image: ["amazonlinux:2", "amazonlinux:2023"]
+        image: ["amazonlinux:2023"]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -89,3 +89,19 @@ jobs:
               output="$(/vedup/bin/setup --non-interactive --profile server --no-macos-defaults --no-shell-change)"
               grep -q "already synchronized; no changes were made" <<< "$output"
             '
+
+  amazon-linux-2-rejection:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+      - name: Reject the end-of-support Amazon Linux release clearly
+        run: |
+          output="$(docker run --rm \
+            --env HOME=/root \
+            --env USER=root \
+            --volume "$PWD:/vedup:ro" \
+            amazonlinux:2 /bin/bash -lc \
+              '/vedup/bin/setup --non-interactive --profile server --no-shell-change' 2>&1)" && exit 1
+          grep -q 'Amazon Linux 2 reached end-of-support' <<< "$output"
