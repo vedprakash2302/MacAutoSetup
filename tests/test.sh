@@ -227,9 +227,11 @@ dry_run_matrix() {
 
 interactive_installer() {
   local mac_output linux_output custom_output
-  mac_output="$(MACAUTOSETUP_TEST_OS=macos MACAUTOSETUP_TEST_ARCH=arm64 \
+  if ! mac_output="$(MACAUTOSETUP_TEST_OS=macos MACAUTOSETUP_TEST_ARCH=arm64 \
     MACAUTOSETUP_TEST_CHOICES='workstation|no|no|no|no|no|yes' MACAUTOSETUP_NO_GUM_DOWNLOAD=1 \
-    MACAUTOSETUP_INSTALLER_PRINT_ARGS=1 "$REPO_ROOT/bin/install" 2>&1)"
+    MACAUTOSETUP_INSTALLER_PRINT_ARGS=1 "$REPO_ROOT/bin/install" 2>&1)"; then
+    fail "Mac interactive installer exited unsuccessfully: $mac_output"
+  fi
   if [[ "$mac_output" != *"Detected: macOS "* ]] || [[ "$mac_output" != *" / arm64"* ]]; then
     fail "interactive installer did not describe the detected Mac"
   fi
@@ -239,9 +241,11 @@ interactive_installer() {
   [[ "$mac_output" == *"▲ ADVANCED — Experimental macOS preferences"* ]] || \
     fail "interactive installer does not explain experimental settings"
 
-  linux_output="$(MACAUTOSETUP_TEST_OS=linux MACAUTOSETUP_TEST_ARCH=x64 MACAUTOSETUP_TEST_DISTRO=ubuntu \
+  if ! linux_output="$(MACAUTOSETUP_TEST_OS=linux MACAUTOSETUP_TEST_ARCH=x64 MACAUTOSETUP_TEST_DISTRO=ubuntu \
     MACAUTOSETUP_TEST_CHOICES='yes|yes|no' MACAUTOSETUP_NO_GUM_DOWNLOAD=1 \
-    MACAUTOSETUP_INSTALLER_PRINT_ARGS=1 "$REPO_ROOT/bin/install" 2>&1)"
+    MACAUTOSETUP_INSTALLER_PRINT_ARGS=1 "$REPO_ROOT/bin/install" 2>&1)"; then
+    fail "Linux interactive installer exited unsuccessfully: $linux_output"
+  fi
   [[ "$linux_output" == *"SETUP_ARGS --profile server --with-aws --with-docker"* && \
     "$linux_output" == *"--without-personal-apps"* && "$linux_output" == *"--no-shell-change"* ]] || \
     fail "Linux interactive selections did not map to setup arguments"
@@ -253,9 +257,11 @@ interactive_installer() {
   [[ "$linux_output" == *"That group has root-equivalent control"* ]] || \
     fail "interactive installer does not explain Docker's group side effect"
 
-  custom_output="$(MACAUTOSETUP_TEST_OS=macos MACAUTOSETUP_TEST_ARCH=x64 \
+  if ! custom_output="$(MACAUTOSETUP_TEST_OS=macos MACAUTOSETUP_TEST_ARCH=x64 \
     MACAUTOSETUP_TEST_CHOICES='custom|no|yes|no|no|no|no|yes' MACAUTOSETUP_NO_GUM_DOWNLOAD=1 \
-    MACAUTOSETUP_INSTALLER_PRINT_ARGS=1 "$REPO_ROOT/bin/setup" --interactive 2>&1)"
+    MACAUTOSETUP_INSTALLER_PRINT_ARGS=1 "$REPO_ROOT/bin/setup" --interactive 2>&1)"; then
+    fail "Custom Mac interactive installer exited unsuccessfully: $custom_output"
+  fi
   [[ "$custom_output" == *"SETUP_ARGS --profile server"* && "$custom_output" == *"--macos-defaults"* && \
     "$custom_output" == *"--without-personal-apps"* ]] || \
     fail "custom Mac safe-preference selection was not preserved"
