@@ -1,139 +1,133 @@
 #!/usr/bin/env bash
-
 set -Eeuo pipefail
 
-REPOSITORY_URL="https://github.com/vedprakash2302/MacAutoSetup.git"
-INSTALL_ROOT="${MACAUTOSETUP_ROOT:-${XDG_DATA_HOME:-$HOME/.local/share}/macautosetup/repo}"
-RELEASE_REF="${MACAUTOSETUP_RELEASE_REF:-__RELEASE_REF__}"
-RELEASE_COMMIT="${MACAUTOSETUP_RELEASE_COMMIT:-__RELEASE_COMMIT__}"
+# These values are replaced by the release workflow. The published bootstrap is
+# intentionally immutable: it always downloads one archive with one checksum.
+VEDUP_RELEASE_REF="__VEDUP_RELEASE_REF__"
+VEDUP_RELEASE_COMMIT="__VEDUP_RELEASE_COMMIT__"
+VEDUP_ARCHIVE_SHA256="__VEDUP_ARCHIVE_SHA256__"
+VEDUP_REPOSITORY="${VEDUP_REPOSITORY:-vedprakash2302/MacAutoSetup}"
+VEDUP_DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}/vedup"
+VEDUP_RELEASES_DIR="$VEDUP_DATA_HOME/releases"
+VEDUP_CURRENT_LINK="$VEDUP_DATA_HOME/current"
 
-if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
-  BOOT_PURPLE='\033[38;5;99m' BOOT_PINK='\033[38;5;212m' BOOT_RED='\033[38;5;196m'
-  BOOT_BOLD='\033[1m' BOOT_RESET='\033[0m'
+if [[ -t 1 ]]; then
+  BOLD=$'\033[1m'
+  DIM=$'\033[2m'
+  CYAN=$'\033[36m'
+  RED=$'\033[31m'
+  RESET=$'\033[0m'
 else
-  BOOT_PURPLE='' BOOT_PINK='' BOOT_RED='' BOOT_BOLD='' BOOT_RESET=''
+  BOLD="" DIM="" CYAN="" RED="" RESET=""
 fi
 
-log() { printf '%b◆%b %s\n' "$BOOT_PURPLE" "$BOOT_RESET" "$*"; }
-die() { printf '%b✗ ERROR:%b %s\n' "$BOOT_RED" "$BOOT_RESET" "$*" >&2; exit 1; }
+say() { printf '%s\n' "$*"; }
+step() { printf '%s◆%s %s\n' "$CYAN" "$RESET" "$*"; }
+die() { printf '%s✗ ERROR:%s %s\n' "$RED" "$RESET" "$*" >&2; exit 1; }
 
-has() { command -v "$1" >/dev/null 2>&1; }
+say "${BOLD}Vedup${RESET}  ${DIM}Safe machine synchronization${RESET}"
+say ""
 
-sudo_run() {
-  if [ "$(id -u)" -eq 0 ]; then
-    "$@"
-  elif has sudo; then
-    sudo "$@"
+if [[ -n "${AUTHOR_MODE:-}" ]]; then
+  die "AUTHOR_MODE is no longer supported by the remote bootstrap. Contributors should clone the repository separately and run ./bin/install."
+fi
+
+case "$VEDUP_RELEASE_REF:$VEDUP_RELEASE_COMMIT:$VEDUP_ARCHIVE_SHA256" in
+  __*|*:__*)
+    die "This source checkout is not a published release bootstrap. Use ./bin/install here, or download bootstrap from a GitHub release."
+    ;;
+esac
+
+for command_name in bash curl tar; do
+  command -v "$command_name" >/dev/null 2>&1 || die "$command_name is required."
+done
+
+checksum_file() {
+  local file="$1"
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$file" | awk '{print $1}'
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$file" | awk '{print $1}'
   else
-    die "Administrator access is required to install Git."
+    die "sha256sum or shasum is required to verify the Vedup release."
   fi
 }
 
-detect_os() {
-  case "$(uname -s)" in
-    Darwin) printf 'macos\n' ;;
-    Linux) printf 'linux\n' ;;
-    *) die "Unsupported operating system: $(uname -s)" ;;
-  esac
+safe_component() {
+  [[ "$1" =~ ^[A-Za-z0-9._+-]+$ ]]
 }
 
-ensure_git() {
-  has git && return 0
+safe_component "$VEDUP_RELEASE_REF" || die "The embedded release tag is invalid."
+safe_component "$VEDUP_RELEASE_COMMIT" || die "The embedded release commit is invalid."
+[[ "$VEDUP_ARCHIVE_SHA256" =~ ^[a-fA-F0-9]{64}$ ]] || die "The embedded release checksum is invalid."
 
-  case "$(detect_os)" in
-    macos)
-      log "Installing Xcode Command Line Tools. Complete the macOS prompt if one appears."
-      xcode-select --install >/dev/null 2>&1 || true
-      attempts=0
-      until xcode-select -p >/dev/null 2>&1; do
-        attempts=$((attempts + 1))
-        [ "$attempts" -lt 120 ] || die "Timed out waiting for Xcode Command Line Tools. Install them and retry."
-        sleep 5
-      done
-      ;;
-    linux)
-      [ -r /etc/os-release ] || die "Cannot identify this Linux distribution."
-      # shellcheck disable=SC1091
-      . /etc/os-release
-      case "$ID" in
-        ubuntu)
-          sudo_run apt-get update
-          sudo_run apt-get install -y ca-certificates curl git
-          ;;
-        amzn)
-          if has dnf; then sudo_run dnf install -y ca-certificates curl git
-          else sudo_run yum install -y ca-certificates curl git; fi
-          ;;
-        *) die "Unsupported Linux distribution for v1: $ID" ;;
-      esac
-      ;;
-  esac
+release_name="${VEDUP_RELEASE_REF}-${VEDUP_RELEASE_COMMIT:0:12}"
+release_dir="$VEDUP_RELEASES_DIR/$release_name"
+archive_name="vedup-${VEDUP_RELEASE_REF}.tar.gz"
+archive_url="https://github.com/${VEDUP_REPOSITORY}/releases/download/${VEDUP_RELEASE_REF}/${archive_name}"
 
-  has git || die "Git installation did not succeed."
+mkdir -p "$VEDUP_RELEASES_DIR"
+
+release_is_valid() {
+  [[ -x "$release_dir/bin/install" && -x "$release_dir/bin/setup" && -r "$release_dir/.vedup-release" ]] || return 1
+  grep -Fxq "release=$VEDUP_RELEASE_REF" "$release_dir/.vedup-release" && \
+    grep -Fxq "commit=$VEDUP_RELEASE_COMMIT" "$release_dir/.vedup-release" && \
+    grep -Fxq "archive_sha256=$VEDUP_ARCHIVE_SHA256" "$release_dir/.vedup-release"
 }
 
-resolve_ref() {
-  if [ "${AUTHOR_MODE:-0}" = "1" ]; then
-    printf 'main\n'
-  elif [[ "$RELEASE_REF" != __RELEASE_REF__ ]]; then
-    printf '%s\n' "$RELEASE_REF"
-  else
-    # Direct execution from the repository is a development install.
-    printf 'main\n'
-  fi
-}
+if [[ -e "$release_dir" ]] && ! release_is_valid; then
+  die "The immutable release directory exists but failed validation: $release_dir. Move it aside for inspection, then retry."
+fi
 
-checkout_repo() {
-  local ref
-  ref="$(resolve_ref)"
+if ! release_is_valid; then
+  step "[1/3] Downloading Vedup ${VEDUP_RELEASE_REF}"
+  work_dir="$(mktemp -d "$VEDUP_RELEASES_DIR/.download.XXXXXX")"
+  cleanup() { rm -rf "$work_dir"; }
+  trap cleanup EXIT INT TERM
 
-  if [ -e "$INSTALL_ROOT" ] && [ ! -d "$INSTALL_ROOT/.git" ]; then
-    die "$INSTALL_ROOT exists but is not a Git checkout. Move it aside and retry."
-  fi
+  archive_path="$work_dir/$archive_name"
+  curl --fail --silent --show-error --location --retry 3 --retry-delay 1 --proto '=https' --tlsv1.2 \
+    "$archive_url" --output "$archive_path"
 
-  if [ ! -d "$INSTALL_ROOT/.git" ]; then
-    log "Cloning Vedup into $INSTALL_ROOT"
-    mkdir -p "$(dirname "$INSTALL_ROOT")"
-    git clone "$REPOSITORY_URL" "$INSTALL_ROOT"
-  fi
+  step "[2/3] Verifying the release archive"
+  actual_checksum="$(checksum_file "$archive_path")"
+  [[ "$actual_checksum" == "$VEDUP_ARCHIVE_SHA256" ]] || \
+    die "Release checksum mismatch. Expected $VEDUP_ARCHIVE_SHA256 but received $actual_checksum."
 
-  if [ -n "$(git -C "$INSTALL_ROOT" status --porcelain)" ]; then
-    die "The managed checkout is dirty. Commit or stash its changes before upgrading."
-  fi
+  extract_dir="$work_dir/extracted"
+  mkdir -p "$extract_dir"
+  tar -xzf "$archive_path" -C "$extract_dir"
 
-  git -C "$INSTALL_ROOT" fetch --prune origin '+refs/heads/*:refs/remotes/origin/*' '+refs/tags/*:refs/tags/*'
-  if [ "${AUTHOR_MODE:-0}" = "1" ]; then
-    git -C "$INSTALL_ROOT" checkout -B main origin/main
-  else
-    git -C "$INSTALL_ROOT" checkout --detach "$ref"
-  fi
+  payload_dir="$extract_dir/vedup-${VEDUP_RELEASE_REF}"
+  [[ -d "$payload_dir" ]] || payload_dir="$extract_dir"
+  [[ -x "$payload_dir/bin/install" && -x "$payload_dir/bin/setup" ]] || \
+    die "The verified archive is incomplete."
 
-  if [[ "$RELEASE_COMMIT" != __RELEASE_COMMIT__ ]] && [ "${AUTHOR_MODE:-0}" != "1" ]; then
-    [ "$(git -C "$INSTALL_ROOT" rev-parse HEAD)" = "$RELEASE_COMMIT" ] || \
-      die "Release checkout does not match the expected release commit."
-  fi
-}
+  {
+    printf 'release=%s\n' "$VEDUP_RELEASE_REF"
+    printf 'commit=%s\n' "$VEDUP_RELEASE_COMMIT"
+    printf 'archive_sha256=%s\n' "$VEDUP_ARCHIVE_SHA256"
+  } > "$payload_dir/.vedup-release"
 
-main() {
-  printf '%b%bVedup%b  %bFresh-machine bootstrap%b\n\n' \
-    "$BOOT_BOLD" "$BOOT_PINK" "$BOOT_RESET" "$BOOT_PURPLE" "$BOOT_RESET"
-  log "[1/3] Checking prerequisites for $(detect_os)"
-  ensure_git
-  log "[2/3] Loading the tested Vedup release"
-  checkout_repo
-  log "[3/3] Starting the installer"
-  if [ "${1:-}" = --interactive ]; then
-    shift
-    exec "$INSTALL_ROOT/bin/install" "$@"
+  pending_dir="$VEDUP_RELEASES_DIR/.pending-$release_name-$$"
+  mv "$payload_dir" "$pending_dir"
+  if ! mv "$pending_dir" "$release_dir" 2>/dev/null; then
+    if release_is_valid; then rm -rf "$pending_dir"; else die "Could not install the verified release atomically."; fi
   fi
-  if [ "${1:-}" = --non-interactive ]; then
-    shift
-    exec "$INSTALL_ROOT/bin/setup" "$@"
-  fi
-  if [ "$#" -eq 0 ] && [ -t 0 ] && [ -t 1 ]; then
-    exec "$INSTALL_ROOT/bin/install"
-  fi
-  exec "$INSTALL_ROOT/bin/setup" "$@"
-}
+  trap - EXIT INT TERM
+  rm -rf "$work_dir"
+else
+  step "[1/3] Using verified Vedup ${VEDUP_RELEASE_REF}"
+  step "[2/3] Release files are already available"
+fi
 
-main "$@"
+step "[3/3] Starting the adaptive installer"
+export VEDUP_PENDING_RELEASE="$release_dir"
+export VEDUP_CURRENT_LINK
+export VEDUP_RELEASE_REF
+export VEDUP_RELEASE_COMMIT
+export VEDUP_LEGACY_ROOT="${XDG_DATA_HOME:-$HOME/.local/share}/macautosetup/repo"
+if [ "$#" -eq 0 ] && [ -t 0 ] && [ -t 1 ]; then
+  exec "$release_dir/bin/install"
+fi
+exec "$release_dir/bin/setup" "$@"

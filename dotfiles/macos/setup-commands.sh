@@ -7,6 +7,7 @@ MACOS_DRY_RUN=0
 MINIMAL_DOCK=0
 KEYBOARD_SHORTCUTS=0
 EXPERIMENTAL=0
+MACOS_CHECK_ONLY=0
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -14,22 +15,48 @@ while [ "$#" -gt 0 ]; do
     --minimal-dock) MINIMAL_DOCK=1 ;;
     --keyboard-shortcuts) KEYBOARD_SHORTCUTS=1 ;;
     --experimental) EXPERIMENTAL=1 ;;
+    --check) MACOS_CHECK_ONLY=1 ;;
     *) printf 'Unknown macOS settings option: %s\n' "$1" >&2; exit 2 ;;
   esac
   shift
 done
 export MACOS_DRY_RUN
+export MACOS_CHECK_ONLY
 
 if [ "${MACAUTOSETUP_TEST_OS:-}" != macos ] && [ "$(uname -s)" != Darwin ]; then
   printf 'macOS settings can only be applied on macOS.\n' >&2
   exit 1
 fi
 
-if [ "$MACOS_DRY_RUN" = 1 ]; then
-  printf '[dry-run] %q\n' "$SCRIPT_DIR/../../bin/macos-backup"
+list_touched_keys() {
+  MACOS_LIST_KEYS=1 "$SCRIPT_DIR/settings/core.sh"
+  [ "$MINIMAL_DOCK" = 1 ] && MACOS_LIST_KEYS=1 "$SCRIPT_DIR/settings/minimal-dock.sh"
+  [ "$KEYBOARD_SHORTCUTS" = 1 ] && MACOS_LIST_KEYS=1 "$SCRIPT_DIR/settings/keyboard-shortcuts.sh"
+  [ "$EXPERIMENTAL" = 1 ] && MACOS_LIST_KEYS=1 "$SCRIPT_DIR/settings/experimental.sh"
+  return 0
+}
+
+if [ "$MACOS_CHECK_ONLY" = 1 ]; then
+  "$SCRIPT_DIR/settings/core.sh"
+  [ "$MINIMAL_DOCK" = 1 ] && "$SCRIPT_DIR/settings/minimal-dock.sh"
+  [ "$KEYBOARD_SHORTCUTS" = 1 ] && "$SCRIPT_DIR/settings/keyboard-shortcuts.sh"
+  [ "$EXPERIMENTAL" = 1 ] && "$SCRIPT_DIR/settings/experimental.sh"
+  exit 0
+elif [ "$MACOS_DRY_RUN" = 1 ]; then
+  printf '[dry-run] %q --keys-file <touched-keys>\n' "$SCRIPT_DIR/../../bin/macos-backup"
 else
-  backup_dir="$("$SCRIPT_DIR/../../bin/macos-backup")"
-  trap 'printf "macOS preference application failed. Restore with: %q %q\n" "$SCRIPT_DIR/../../bin/macos-restore" "$backup_dir" >&2' ERR
+  keys_file="$(mktemp "${TMPDIR:-/tmp}/vedup-macos-keys.XXXXXX")"
+  list_touched_keys | awk '!seen[$0]++' > "$keys_file"
+  backup_dir="$("$SCRIPT_DIR/../../bin/macos-backup" --keys-file "$keys_file")"
+  rm -f "$keys_file"
+  if [ -n "${VEDUP_MACOS_ROLLBACK_FILE:-}" ]; then printf '%s\n' "$backup_dir" > "$VEDUP_MACOS_ROLLBACK_FILE"; fi
+  rollback_preferences() {
+    printf 'macOS preference application failed; restoring the pre-run snapshot.\n' >&2
+    "$SCRIPT_DIR/../../bin/macos-restore" "$backup_dir" || \
+      printf 'Automatic restore failed. Recovery snapshot: %s\n' "$backup_dir" >&2
+    [ -z "${VEDUP_MACOS_ROLLBACK_FILE:-}" ] || rm -f "$VEDUP_MACOS_ROLLBACK_FILE"
+  }
+  trap rollback_preferences ERR
 fi
 
 "$SCRIPT_DIR/settings/core.sh"

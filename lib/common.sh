@@ -22,6 +22,45 @@ die() {
 }
 has() { command -v "$1" >/dev/null 2>&1; }
 
+# Hermetic tests provide a TSV inventory instead of observing the host package
+# database. Production runs never set VEDUP_TEST_INVENTORY_FILE.
+inventory_fixture_has() {
+  local category="$1" name="$2"
+  [ -n "${VEDUP_TEST_INVENTORY_FILE:-}" ] || return 2
+  [ -r "$VEDUP_TEST_INVENTORY_FILE" ] || return 1
+  awk -F '\t' -v category="$category" -v name="$name" \
+    '$1 == category && $2 == name { found=1 } END { exit !found }' "$VEDUP_TEST_INVENTORY_FILE"
+}
+
+inventory_command_exists() {
+  local fixture_status
+  if inventory_fixture_has command "$1"; then return 0; else fixture_status="$?"; fi
+  [ "$fixture_status" != 1 ] || return 1
+  has "$1"
+}
+
+inventory_package_installed() {
+  local provider="$1" package="$2" fixture_status
+  if inventory_fixture_has "package:$provider" "$package"; then return 0; else fixture_status="$?"; fi
+  [ "$fixture_status" != 1 ] || return 1
+  case "$provider" in
+    ubuntu) dpkg-query -W -f='${Status}' "$package" 2>/dev/null | grep -q 'ok installed' ;;
+    amazon) rpm -q "$package" >/dev/null 2>&1 ;;
+    formula) brew list --formula "${package##*/}" >/dev/null 2>&1 ;;
+    cask) brew list --cask "${package##*/}" >/dev/null 2>&1 ;;
+    mas) mas list 2>/dev/null | awk '{print $1}' | grep -Fxq "$package" ;;
+    *) return 1 ;;
+  esac
+}
+
+inventory_machine_has_baseline() {
+  if [ -n "${VEDUP_TEST_INVENTORY_FILE:-}" ]; then
+    inventory_command_exists git || inventory_command_exists brew || inventory_command_exists mise
+  else
+    has git || has brew || has mise
+  fi
+}
+
 setup_lock_release() {
   [ -n "${SETUP_LOCK_DIR:-}" ] || return 0
   rm -f -- "$SETUP_LOCK_DIR/pid" 2>/dev/null || true
@@ -30,10 +69,28 @@ setup_lock_release() {
 }
 
 setup_cleanup() {
-  local exit_code="$?"
+  local exit_code="$?" macos_backup_path
   trap - EXIT INT TERM
   set +e
   progress_stop_activity
+  if type plan_cleanup >/dev/null 2>&1; then plan_cleanup; fi
+  if type state_cleanup >/dev/null 2>&1; then state_cleanup; fi
+  if [ "$exit_code" -ne 0 ] && [ "${SETUP_SUCCESS:-0}" != 1 ]; then
+    if type dotfiles_rollback >/dev/null 2>&1; then dotfiles_rollback; fi
+    if [ -r "${VEDUP_MACOS_ROLLBACK_FILE:-}" ]; then
+      macos_backup_path="$(sed -n '1p' "$VEDUP_MACOS_ROLLBACK_FILE")"
+      case "$macos_backup_path" in
+        "${VEDUP_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/vedup}"/macos-preferences/*)
+          warn "Restoring macOS preferences after the interrupted synchronization."
+          "$REPO_ROOT/bin/macos-restore" "$macos_backup_path" || true
+          ;;
+      esac
+      rm -f "$VEDUP_MACOS_ROLLBACK_FILE"
+    fi
+    if type state_journal >/dev/null 2>&1 && [ -n "${VEDUP_TRANSACTION_DIR:-}" ]; then
+      state_journal transaction failed "Setup exited with status $exit_code"
+    fi
+  fi
   sudo_release
   setup_lock_release
   return "$exit_code"
@@ -42,7 +99,8 @@ setup_cleanup() {
 setup_lock_acquire() {
   local state_dir existing_pid
   [ "${DRY_RUN:-0}" != 1 ] || return 0
-  state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/macautosetup"
+  SETUP_SUCCESS=0
+  state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/vedup"
   SETUP_LOCK_DIR="$state_dir/setup.lock"
   mkdir -p "$state_dir"
 
@@ -184,7 +242,7 @@ progress_init() {
   case "$terminal_columns" in ''|*[!0-9]*) ;; *) PROGRESS_COLUMNS="$terminal_columns" ;; esac
   PROGRESS_STAGE_NAME="Starting setup"
   PROGRESS_STAGE_STARTED="$(date +%s)"
-  SETUP_LOG_FILE="${MACAUTOSETUP_LOG_FILE:-${XDG_STATE_HOME:-$HOME/.local/state}/macautosetup/logs/$(date -u +%Y%m%dT%H%M%SZ)-$$.log}"
+  SETUP_LOG_FILE="${VEDUP_LOG_FILE:-${MACAUTOSETUP_LOG_FILE:-${XDG_STATE_HOME:-$HOME/.local/state}/vedup/logs/$(date -u +%Y%m%dT%H%M%SZ)-$$.log}}"
   export SETUP_LOG_FILE
   if [ "${DRY_RUN:-0}" != 1 ]; then
     mkdir -p "$(dirname "$SETUP_LOG_FILE")"
@@ -252,6 +310,7 @@ progress_begin() {
   progress_stop_activity
   PROGRESS_CURRENT=$((PROGRESS_CURRENT + 1))
   PROGRESS_STAGE_NAME="$stage_name"
+  if type state_journal >/dev/null 2>&1; then state_journal "$stage_name" running "$description"; fi
   PROGRESS_STAGE_STARTED="$(date +%s)"
   if [ "$PROGRESS_COMPACT" = 1 ]; then
     limit=$((PROGRESS_COLUMNS - 13))
@@ -305,6 +364,7 @@ progress_bar() {
 progress_done() {
   local elapsed
   progress_stop_activity
+  if type state_journal >/dev/null 2>&1; then state_journal "$PROGRESS_STAGE_NAME" complete "Stage completed"; fi
   elapsed=$(($(date +%s) - PROGRESS_STAGE_STARTED))
   if [ "$PROGRESS_COMPACT" = 1 ]; then
     printf '\033[%sA' "$PROGRESS_DASHBOARD_ROWS" >&3
@@ -362,7 +422,7 @@ progress_failed() {
 }
 
 progress_finish() {
-  local state_dir latest_dotfiles latest_macos
+  local state_dir latest_dotfiles latest_macos external_count retained_count
   local warning_count
   progress_restore_terminal
   if [ "${DRY_RUN:-0}" = 1 ]; then
@@ -378,13 +438,33 @@ progress_finish() {
     if [ "${warning_count:-0}" -gt 0 ]; then
       printf '%bWarnings:%b %s (see the detailed log)\n' "$SETUP_YELLOW" "$SETUP_RESET" "$warning_count"
     fi
-    state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/macautosetup"
+    if [ -r "${PLAN_FILE:-}" ]; then
+      external_count="$(awk -F '\t' '$1 == "keep" && $4 == "external" { count++ } END { print count+0 }' "$PLAN_FILE")"
+      retained_count="$(awk -F '\t' '$2 ~ /^retained:/ { count++ } END { print count+0 }' "$PLAN_FILE")"
+      printf 'Resources: %s installed, %s updated, %s configured, %s unchanged.\n' \
+        "${PLAN_INSTALL_COUNT:-0}" "${PLAN_UPDATE_COUNT:-0}" "${PLAN_CONFIGURE_COUNT:-0}" "${PLAN_KEEP_COUNT:-0}"
+      [ "$external_count" -eq 0 ] || printf 'Retained external software: %s resource(s).\n' "$external_count"
+      [ "$retained_count" -eq 0 ] || printf 'Retained but unselected: %s resource(s); see the plan for manual removal guidance.\n' "$retained_count"
+    fi
+    state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/vedup"
     latest_dotfiles="$(awk 'NF { value=$0 } END { print value }' "$state_dir/backups.list" 2>/dev/null || true)"
     latest_macos="$(awk 'NF { value=$0 } END { print value }' "$state_dir/macos-preferences.list" 2>/dev/null || true)"
     if [ -n "$latest_dotfiles" ] || [ -n "$latest_macos" ]; then
       printf 'Recovery snapshots:\n'
       [ -z "$latest_dotfiles" ] || printf '  Dotfiles:          %s\n' "$latest_dotfiles"
       [ -z "$latest_macos" ] || printf '  macOS preferences: %s\n' "$latest_macos"
+    fi
+    if [ -d "${VEDUP_LEGACY_ROOT:-${XDG_DATA_HOME:-$HOME/.local/share}/macautosetup/repo}" ]; then
+      printf 'Legacy recovery checkout retained: %s\n' "${VEDUP_LEGACY_ROOT:-${XDG_DATA_HOME:-$HOME/.local/share}/macautosetup/repo}"
+    fi
+    if [ "${WITH_DOCKER:-0}" = 1 ] && [ "${OS:-}" = linux ]; then
+      printf 'Action required: log out and back in once before using Docker without sudo.\n'
+    fi
+    if [ "${OS:-}" = macos ] && [ "${PROFILE:-}" = workstation ]; then
+      printf 'If requested: sign into the App Store and approve app permissions on first launch.\n'
+    fi
+    if [ "${KEYBOARD_SHORTCUTS:-0}" = 1 ] || [ "${EXPERIMENTAL_MACOS_DEFAULTS:-0}" = 1 ]; then
+      printf 'Some macOS changes may require logging out or restarting the affected application.\n'
     fi
   fi
   printf '%bNext:%b open a new terminal to use the configured shell and PATH.\n' "$SETUP_CYAN" "$SETUP_RESET"

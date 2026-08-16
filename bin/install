@@ -6,10 +6,16 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck disable=SC1091
 . "$REPO_ROOT/lib/common.sh"
 # shellcheck disable=SC1091
+. "$REPO_ROOT/lib/state.sh"
+# shellcheck disable=SC1091
+. "$REPO_ROOT/lib/plan.sh"
+# shellcheck disable=SC1091
 . "$REPO_ROOT/versions.env"
 
 DRY_RUN=0
 VERBOSE=0
+UPGRADE_APPS=0
+INSTALL_JOBS=""
 UI_TOOL=""
 UI_TEMP_DIR=""
 UI_RESULT=""
@@ -19,7 +25,7 @@ IFS='|' read -r -a TEST_CHOICES <<< "${MACAUTOSETUP_TEST_CHOICES:-}"
 
 usage() {
   cat <<'EOF'
-Usage: bin/install [--dry-run] [--verbose]
+Usage: bin/install [--dry-run] [--verbose] [--jobs NUMBER] [--upgrade-apps]
 
 Run the friendly interactive installer. Use bin/setup directly for
 non-interactive automation and repeatable flag-based installation.
@@ -30,18 +36,26 @@ while [ "$#" -gt 0 ]; do
   case "$1" in
     --dry-run) DRY_RUN=1 ;;
     --verbose) VERBOSE=1 ;;
+    --upgrade-apps) UPGRADE_APPS=1 ;;
+    --jobs) [ "$#" -ge 2 ] || die "--jobs requires a value"; INSTALL_JOBS="$2"; shift ;;
     -h|--help) usage; exit 0 ;;
     *) die "Unknown interactive installer option: $1" ;;
   esac
   shift
 done
+if [ -n "$INSTALL_JOBS" ]; then
+  case "$INSTALL_JOBS" in ''|*[!0-9]*) die "--jobs must be a number from 1 to 8" ;; esac
+  if [ "$INSTALL_JOBS" -lt 1 ] || [ "$INSTALL_JOBS" -gt 8 ]; then die "--jobs must be a number from 1 to 8"; fi
+fi
 
 cleanup_ui() {
   if [ -n "$UI_TEMP_DIR" ]; then
     case "$UI_TEMP_DIR" in
-      "${TMPDIR:-/tmp}"/macautosetup-gum.*) rm -rf -- "$UI_TEMP_DIR" ;;
+      "${TMPDIR:-/tmp}"/vedup-gum.*) rm -rf -- "$UI_TEMP_DIR" ;;
     esac
   fi
+  if type plan_cleanup >/dev/null 2>&1; then plan_cleanup; fi
+  if type state_cleanup >/dev/null 2>&1; then state_cleanup; fi
 }
 trap cleanup_ui EXIT
 
@@ -59,24 +73,33 @@ normalize_platform() {
     *) die "Unsupported architecture: $machine" ;;
   esac
   if [ "$OS" = macos ]; then
+    DISTRO=macos
+    DISTRO_VERSION="$(sw_vers -productVersion 2>/dev/null || printf test)"
+    PLATFORM_ADAPTER=macos
     PLATFORM_NAME="macOS $(sw_vers -productVersion 2>/dev/null || printf 'test') / $ARCH"
   else
     if [ -n "${MACAUTOSETUP_TEST_DISTRO:-}" ]; then
+      DISTRO="$MACAUTOSETUP_TEST_DISTRO"
+      DISTRO_VERSION="${MACAUTOSETUP_TEST_DISTRO_VERSION:-test}"
       distro_name="$MACAUTOSETUP_TEST_DISTRO ${MACAUTOSETUP_TEST_DISTRO_VERSION:-test}"
     elif [ -r /etc/os-release ]; then
       # shellcheck disable=SC1091
       . /etc/os-release
+      DISTRO="$ID"
+      DISTRO_VERSION="${VERSION_ID:-unknown}"
       distro_name="${PRETTY_NAME:-$ID}"
     else
       distro_name=Linux
     fi
     PLATFORM_NAME="$distro_name / $ARCH"
+    case "$DISTRO" in ubuntu) PLATFORM_ADAPTER=ubuntu ;; amzn) PLATFORM_ADAPTER=amazon ;; *) PLATFORM_ADAPTER="$DISTRO" ;; esac
   fi
   columns="$(tput cols 2>/dev/null || true)"
   case "$columns" in
     ''|*[!0-9]*) ;;
     *) if [ "$columns" -lt 76 ] && [ "$columns" -gt 24 ]; then UI_WIDTH=$((columns - 4)); fi ;;
   esac
+  export OS ARCH DISTRO DISTRO_VERSION PLATFORM_ADAPTER
 }
 
 prepare_gum() {
@@ -99,7 +122,7 @@ prepare_gum() {
     macos/arm64) checksum="$GUM_SHA_MACOS_ARM64" ;;
   esac
   asset="gum_${GUM_VERSION}_${gum_os}_${gum_arch}.tar.gz"
-  UI_TEMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/macautosetup-gum.XXXXXX")"
+  UI_TEMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/vedup-gum.XXXXXX")"
   archive="$UI_TEMP_DIR/$asset"
   if ! animated_download "https://github.com/charmbracelet/gum/releases/download/v${GUM_VERSION}/$asset" "$checksum" "$archive"; then
     warn "Could not download the enhanced interface; using numbered menus."
@@ -356,30 +379,74 @@ choose_optional_features() {
   return 0
 }
 
+load_saved_choices() {
+  PROFILE="$STATE_PROFILE"
+  WITH_AWS="$STATE_WITH_AWS"
+  WITH_DOCKER="$STATE_WITH_DOCKER"
+  WITH_PERSONAL_APPS="$STATE_WITH_PERSONAL_APPS"
+  APPLY_MACOS_DEFAULTS="$STATE_APPLY_MACOS_DEFAULTS"
+  MINIMAL_DOCK="$STATE_MINIMAL_DOCK"
+  KEYBOARD_SHORTCUTS="$STATE_KEYBOARD_SHORTCUTS"
+  EXPERIMENTAL_MACOS_DEFAULTS="$STATE_EXPERIMENTAL_MACOS_DEFAULTS"
+  CHANGE_SHELL="$STATE_CHANGE_SHELL"
+}
+
+review_gui_updates() {
+  local cask
+  local -a selected=() review_casks
+  [ "$OS" = macos ] && [ "$PROFILE" = workstation ] && inventory_command_exists brew || return 0
+  ui_heading "Optional desktop application updates"
+  if [ "$UPGRADE_APPS" = 1 ]; then
+    ui_text "--upgrade-apps was supplied; every outdated app in the selected bundle will be upgraded."
+    return 0
+  fi
+  ui_text "Installed GUI applications are preserved during Safe sync. Outdated apps"
+  ui_text "appear here unchecked; select only updates you want Vedup to perform now."
+  review_casks=(cursor ghostty raycast docker-desktop aerospace font-jetbrains-mono-nerd-font chatgpt zed thebrowsercompany-dia google-chrome shottr jump-desktop hiddenbar logi-options+)
+  [ "$WITH_PERSONAL_APPS" = 1 ] && review_casks+=(ankerwork caffeine craft flux-app focus warp)
+  for cask in "${review_casks[@]}"; do
+    inventory_package_installed cask "$cask" || continue
+    plan_cask_outdated "$cask" || continue
+    ask_yes_no no "Upgrade $cask during this sync?"
+    [ "$UI_RESULT" = yes ] && selected+=("$cask")
+  done
+  VEDUP_SELECTED_APP_UPGRADES="${selected[*]}"
+  export VEDUP_SELECTED_APP_UPGRADES
+}
+
 build_setup_args() {
   SETUP_ARGS=(--profile "$PROFILE")
-  [ "$WITH_AWS" = 1 ] && SETUP_ARGS+=(--with-aws)
-  [ "$WITH_DOCKER" = 1 ] && SETUP_ARGS+=(--with-docker)
-  [ "$WITH_PERSONAL_APPS" = 1 ] && SETUP_ARGS+=(--with-personal-apps)
+  if [ "$WITH_AWS" = 1 ]; then SETUP_ARGS+=(--with-aws); else SETUP_ARGS+=(--without-aws); fi
+  if [ "$WITH_DOCKER" = 1 ]; then SETUP_ARGS+=(--with-docker); else SETUP_ARGS+=(--without-docker); fi
+  if [ "$WITH_PERSONAL_APPS" = 1 ]; then SETUP_ARGS+=(--with-personal-apps); else SETUP_ARGS+=(--without-personal-apps); fi
   if [ "$OS" = macos ]; then
     if [ "$APPLY_MACOS_DEFAULTS" = 1 ]; then SETUP_ARGS+=(--macos-defaults)
     else SETUP_ARGS+=(--no-macos-defaults); fi
   fi
-  [ "$MINIMAL_DOCK" = 1 ] && SETUP_ARGS+=(--minimal-dock)
-  [ "$KEYBOARD_SHORTCUTS" = 1 ] && SETUP_ARGS+=(--keyboard-shortcuts)
-  [ "$EXPERIMENTAL_MACOS_DEFAULTS" = 1 ] && SETUP_ARGS+=(--experimental-macos-defaults)
-  [ "$CHANGE_SHELL" = 0 ] && SETUP_ARGS+=(--no-shell-change)
+  if [ "$MINIMAL_DOCK" = 1 ]; then SETUP_ARGS+=(--minimal-dock); else SETUP_ARGS+=(--no-minimal-dock); fi
+  if [ "$KEYBOARD_SHORTCUTS" = 1 ]; then SETUP_ARGS+=(--keyboard-shortcuts); else SETUP_ARGS+=(--no-keyboard-shortcuts); fi
+  if [ "$EXPERIMENTAL_MACOS_DEFAULTS" = 1 ]; then SETUP_ARGS+=(--experimental-macos-defaults); else SETUP_ARGS+=(--no-experimental-macos-defaults); fi
+  if [ "$CHANGE_SHELL" = 1 ]; then SETUP_ARGS+=(--shell-change); else SETUP_ARGS+=(--no-shell-change); fi
   [ "$DRY_RUN" = 1 ] && SETUP_ARGS+=(--dry-run)
   [ "$VERBOSE" = 1 ] && SETUP_ARGS+=(--verbose)
+  [ "$UPGRADE_APPS" = 1 ] && SETUP_ARGS+=(--upgrade-apps)
+  [ -z "$INSTALL_JOBS" ] || SETUP_ARGS+=(--jobs "$INSTALL_JOBS")
   return 0
 }
 
 print_plan() {
   local command="" argument
-  ui_title "Review installation plan"
+  ui_title "Review synchronization plan"
   ui_plan_row "Machine" "$PLATFORM_NAME" enabled
+  ui_plan_row "Detected workflow" "$PLAN_WORKFLOW" enabled
   ui_plan_row "Environment" "$([ "$PROFILE" = workstation ] && printf 'workstation' || printf 'terminal development')" enabled
-  if [ "$DRY_RUN" = 1 ]; then ui_plan_row "Administrator approval" "not needed for preview" skipped
+  ui_plan_row "Missing" "$PLAN_INSTALL_COUNT to install" "$([ "$PLAN_INSTALL_COUNT" -gt 0 ] && printf enabled || printf skipped)"
+  ui_plan_row "Managed updates" "$PLAN_UPDATE_COUNT to update" "$([ "$PLAN_UPDATE_COUNT" -gt 0 ] && printf enabled || printf skipped)"
+  ui_plan_row "Configuration" "$PLAN_CONFIGURE_COUNT to configure" "$([ "$PLAN_CONFIGURE_COUNT" -gt 0 ] && printf enabled || printf skipped)"
+  ui_plan_row "Unchanged" "$PLAN_KEEP_COUNT retained" skipped
+  ui_plan_row "Needs review" "$PLAN_REVIEW_COUNT reviewed" "$([ "$PLAN_REVIEW_COUNT" -gt 0 ] && printf warning || printf skipped)"
+  ui_plan_row "Conflicts" "$PLAN_CONFLICT_COUNT backed up transactionally" "$([ "$PLAN_CONFLICT_COUNT" -gt 0 ] && printf warning || printf skipped)"
+  if [ "$DRY_RUN" = 1 ] || [ "$PLAN_NEEDS_SUDO" != 1 ]; then ui_plan_row "Administrator approval" "not needed for this plan" skipped
   else ui_plan_row "Administrator approval" "passwordless when allowed; otherwise one prompt" enabled; fi
   if [ "$WITH_AWS" = 1 ]; then ui_plan_row "AWS CLI" "✓ install" enabled
   else ui_plan_row "AWS CLI" "– skip" skipped; fi
@@ -406,6 +473,9 @@ print_plan() {
 
   printf -v command '%q' "$REPO_ROOT/bin/setup"
   for argument in "${SETUP_ARGS[@]}"; do printf -v command '%s %q' "$command" "$argument"; done
+  if [ -n "${VEDUP_SELECTED_APP_UPGRADES:-}" ]; then
+    printf -v command 'VEDUP_SELECTED_APP_UPGRADES=%q %s' "$VEDUP_SELECTED_APP_UPGRADES" "$command"
+  fi
   ui_heading "Equivalent reusable command"
   if [ -n "$UI_TOOL" ]; then
     "$UI_TOOL" style --border rounded --padding "0 1" --width "$UI_WIDTH" \
@@ -413,6 +483,31 @@ print_plan() {
   else
     printf '  %s\n\n' "$command"
   fi
+}
+
+show_plan_details() {
+  ui_heading "Planned resources"
+  awk -F '\t' '{ printf "  %-10s %-28s %s\n", $1, $2, $7 }' "$PLAN_FILE"
+}
+
+adaptive_review() {
+  while :; do
+    ui_choose "What would you like to do?" "Safe sync" "Customize" "Show details" "Exit"
+    case "$UI_RESULT" in
+      safe|Safe*) return 0 ;;
+      customize|Customize*)
+        choose_profile
+        choose_optional_features
+        review_gui_updates
+        build_setup_args
+        plan_generate
+        print_plan
+        ;;
+      details|Show*) show_plan_details ;;
+      exit|Exit*) die "Synchronization cancelled; no setup changes were made." ;;
+      *) die "Unexpected review selection: $UI_RESULT" ;;
+    esac
+  done
 }
 
 main() {
@@ -427,9 +522,23 @@ main() {
   ui_intro
   ui_text "Detected: $PLATFORM_NAME"
   ui_text "No machine changes will be made until you review and confirm the plan."
-  choose_profile
-  choose_optional_features
+  DOTFILES_ONLY=0 SKIP_PLUGINS=0
+  STOW_PACKAGES=(zsh nvim starship tmux scripts)
+  [ "$OS" = macos ] && STOW_PACKAGES+=(aerospace ghostty cursor)
+  state_detect_workflow
+  if [ "$STATE_WORKFLOW" = managed ] || [ "$STATE_WORKFLOW" = interrupted ]; then
+    load_saved_choices
+    ui_heading "$([ "$STATE_WORKFLOW" = interrupted ] && printf 'Resume interrupted synchronization' || printf 'Existing Vedup machine')"
+    ui_text "Saved component choices were restored. Vedup will show only missing,"
+    ui_text "managed updates, configuration drift, and conflicts."
+    review_gui_updates
+  else
+    choose_profile
+    choose_optional_features
+    review_gui_updates
+  fi
   build_setup_args
+  plan_generate
   print_plan
 
   if [ "${MACAUTOSETUP_INSTALLER_PRINT_ARGS:-0}" = 1 ]; then
@@ -438,9 +547,7 @@ main() {
     printf '\n'
     return 0
   fi
-  if [ "$DRY_RUN" = 1 ]; then ask_yes_no yes "Run this no-change preview?"
-  else ask_yes_no yes "Begin installation?"; fi
-  [ "$UI_RESULT" = yes ] || die "Installation cancelled; no setup changes were made."
+  adaptive_review
   cleanup_ui
   UI_TEMP_DIR=""
   exec "$REPO_ROOT/bin/setup" "${SETUP_ARGS[@]}"

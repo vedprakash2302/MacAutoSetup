@@ -4,7 +4,7 @@ set -Eeuo pipefail
 
 [ "$(uname -s)" = Darwin ] || { printf 'macos-restore can only run on macOS.\n' >&2; exit 1; }
 
-STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/macautosetup"
+STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/vedup"
 LEDGER="$STATE_DIR/macos-preferences.list"
 BACKUP_DIR="${1:-}"
 
@@ -34,6 +34,20 @@ while IFS='|' read -r scope domain filename; do
     defaults import "$domain" "$BACKUP_DIR/$filename"
   fi
 done < "$BACKUP_DIR/manifest"
+
+# Domain imports restore keys that existed. Explicitly delete keys introduced by
+# the failed transaction, including keys in domains that did not exist before.
+if [ -r "$BACKUP_DIR/keys.tsv" ]; then
+  while IFS=$'\t' read -r scope domain key existed; do
+    [ "$existed" = 0 ] || continue
+    [ "$key" != __entire_domain__ ] || { defaults delete "$domain" >/dev/null 2>&1 || true; continue; }
+    if [ "$scope" = host ]; then
+      defaults -currentHost delete "$domain" "$key" >/dev/null 2>&1 || true
+    else
+      defaults delete "$domain" "$key" >/dev/null 2>&1 || true
+    fi
+  done < "$BACKUP_DIR/keys.tsv"
+fi
 
 if [ -x /System/Library/PrivateFrameworks/SystemAdministration.framework/Resources/activateSettings ]; then
   /System/Library/PrivateFrameworks/SystemAdministration.framework/Resources/activateSettings -u || true

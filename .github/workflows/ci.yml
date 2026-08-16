@@ -29,3 +29,16 @@ jobs:
             brew install shellcheck stow
           fi
       - run: ./tests/test.sh
+      - name: Validate Brewfile providers without installing applications
+        if: runner.os == 'macOS'
+        run: ./tests/brewfile-validation.sh
+
+  amazon-linux:
+    runs-on: ubuntu-24.04
+    container: amazonlinux:2023
+    steps:
+      - name: Install checkout and test dependencies
+        run: dnf install -y git-core bash findutils gzip tar
+      - uses: actions/checkout@v4
+      - name: Validate Amazon Linux provider
+        run: ./tests/amazon-linux.sh

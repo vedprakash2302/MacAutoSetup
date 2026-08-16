@@ -8,7 +8,20 @@ permissions:
   contents: write
 
 jobs:
+  validate-macos:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install test dependencies
+        run: brew install shellcheck stow
+      - run: ./tests/test.sh
+      - run: ./tests/brewfile-validation.sh
+
   release:
+    needs: validate-macos
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -22,16 +35,29 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y shellcheck stow zsh
       - run: ./tests/test.sh
-      - name: Build pinned bootstrap asset
+      - name: Build immutable release assets
         env:
           RELEASE_REF: ${{ github.ref_name }}
           RELEASE_COMMIT: ${{ github.sha }}
         run: |
           mkdir -p dist
-          sed -e "s/__RELEASE_REF__/$RELEASE_REF/g" -e "s/__RELEASE_COMMIT__/$RELEASE_COMMIT/g" bootstrap > dist/bootstrap
+          git archive --format=tar --prefix="vedup-${RELEASE_REF}/" "$RELEASE_COMMIT" | gzip -n > "dist/vedup-${RELEASE_REF}.tar.gz"
+          ARCHIVE_SHA256="$(sha256sum "dist/vedup-${RELEASE_REF}.tar.gz" | awk '{print $1}')"
+          sed \
+            -e "s/__VEDUP_RELEASE_REF__/$RELEASE_REF/g" \
+            -e "s/__VEDUP_RELEASE_COMMIT__/$RELEASE_COMMIT/g" \
+            -e "s/__VEDUP_ARCHIVE_SHA256__/$ARCHIVE_SHA256/g" \
+            bootstrap > dist/bootstrap
           chmod +x dist/bootstrap
-          sha256sum dist/bootstrap > dist/bootstrap.sha256
+          (cd dist && sha256sum bootstrap "vedup-${RELEASE_REF}.tar.gz" > checksums.txt)
+          grep -q "$RELEASE_REF" dist/bootstrap
+          grep -q "$RELEASE_COMMIT" dist/bootstrap
+          ! grep -q '__VEDUP_' dist/bootstrap
+      - name: Verify release assets and bootstrap behavior
+        env:
+          RELEASE_REF: ${{ github.ref_name }}
+        run: ./tests/release-assets.sh dist/bootstrap "dist/vedup-${RELEASE_REF}.tar.gz" dist/checksums.txt
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "${{ github.ref_name }}" dist/bootstrap dist/bootstrap.sha256 --generate-notes --verify-tag
+        run: gh release create "${{ github.ref_name }}" dist/bootstrap "dist/vedup-${{ github.ref_name }}.tar.gz" dist/checksums.txt --generate-notes --verify-tag
