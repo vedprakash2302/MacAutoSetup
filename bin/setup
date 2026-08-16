@@ -114,12 +114,15 @@ while [ "$#" -gt 0 ]; do
 done
 
 if [ "$OPEN_INTERACTIVE" = 1 ]; then
-  interactive_args=()
-  [ "$DRY_RUN" = 1 ] && interactive_args+=(--dry-run)
-  [ "$VERBOSE" = 1 ] && interactive_args+=(--verbose)
-  [ "$UPGRADE_APPS" = 1 ] && interactive_args+=(--upgrade-apps)
-  [ "$PARALLEL_JOBS" = 4 ] || interactive_args+=(--jobs "$PARALLEL_JOBS")
-  exec "$REPO_ROOT/bin/install" "${interactive_args[@]}"
+  # macOS still ships Bash 3.2, where expanding a declared-but-empty array
+  # under `set -u` raises an unbound-variable error. Rebuild the positional
+  # arguments instead so the no-flag interactive path is portable.
+  set --
+  [ "$DRY_RUN" = 1 ] && set -- "$@" --dry-run
+  [ "$VERBOSE" = 1 ] && set -- "$@" --verbose
+  [ "$UPGRADE_APPS" = 1 ] && set -- "$@" --upgrade-apps
+  [ "$PARALLEL_JOBS" = 4 ] || set -- "$@" --jobs "$PARALLEL_JOBS"
+  exec "$REPO_ROOT/bin/install" "$@"
 fi
 
 case "$PARALLEL_JOBS" in
