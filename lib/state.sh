@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC2034
+# shellcheck disable=SC2034,SC2119,SC2120
 
 # Vedup state is data, never shell code. Every file in this directory is a
 # validated TSV document so a corrupted or malicious state file cannot execute.
@@ -9,6 +9,8 @@ VEDUP_LEGACY_STATE_DIR="${VEDUP_LEGACY_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local
 VEDUP_STATE_FILE="$VEDUP_STATE_DIR/state.tsv"
 VEDUP_LIVE_RESOURCES_FILE="$VEDUP_STATE_DIR/resources.tsv"
 VEDUP_RESOURCES_FILE="${VEDUP_RESOURCES_CANDIDATE:-$VEDUP_LIVE_RESOURCES_FILE}"
+VEDUP_LIVE_CHOICES_FILE="$VEDUP_STATE_DIR/choices.tsv"
+VEDUP_CHOICES_FILE="${VEDUP_CHOICES_CANDIDATE:-${VEDUP_CHOICES_FILE:-$VEDUP_LIVE_CHOICES_FILE}}"
 VEDUP_TRANSACTIONS_DIR="$VEDUP_STATE_DIR/transactions"
 
 STATE_FOUND=0
@@ -33,6 +35,7 @@ VEDUP_TRANSACTION_ID=""
 VEDUP_TRANSACTION_DIR=""
 VEDUP_LEGACY_MIGRATION_FILE=""
 VEDUP_INTERRUPTED_TRANSACTION_DIR=""
+STATE_COMMIT_ROLLBACK_ARMED=0
 
 state_valid_scalar() {
   [[ "$1" != *$'\t'* && "$1" != *$'\n'* && "$1" != *$'\r'* ]]
@@ -66,6 +69,10 @@ state_assign() {
     change_shell) state_valid_bool "$value" || return 1; STATE_CHANGE_SHELL="$value" ;;
     stow_packages)
       [[ "$value" =~ ^[a-z0-9._+-]+([[:space:]][a-z0-9._+-]+)*$ ]] || return 1
+      local package
+      for package in $value; do
+        case "$package" in zsh|nvim|starship|tmux|scripts|aerospace|ghostty|cursor) ;; *) return 1 ;; esac
+      done
       STATE_STOW_PACKAGES="$value"
       ;;
     migrated_from) : ;;
@@ -177,6 +184,10 @@ state_detect_workflow() {
     if state_validate_resources "$VEDUP_INTERRUPTED_TRANSACTION_DIR/candidate-resources.tsv" 2>/dev/null; then
       VEDUP_RESOURCES_FILE="$VEDUP_INTERRUPTED_TRANSACTION_DIR/candidate-resources.tsv"
     fi
+    if type choices_validate_file >/dev/null 2>&1 && \
+      choices_validate_file "$VEDUP_INTERRUPTED_TRANSACTION_DIR/candidate-choices.tsv" 2>/dev/null; then
+      VEDUP_CHOICES_FILE="$VEDUP_INTERRUPTED_TRANSACTION_DIR/candidate-choices.tsv"
+    fi
     STATE_WORKFLOW="interrupted"
   elif state_load "$VEDUP_STATE_FILE" 2>/dev/null; then
     if state_validate_resources "$VEDUP_LIVE_RESOURCES_FILE" 2>/dev/null; then
@@ -237,23 +248,41 @@ state_write_candidate() {
   if [[ -n "${PLAN_FILE:-}" && -f "$PLAN_FILE" ]]; then
     cp "$PLAN_FILE" "$VEDUP_TRANSACTION_DIR/candidate-resources.tsv"
   fi
+  if type choices_write_file >/dev/null 2>&1; then
+    choices_write_file "$VEDUP_TRANSACTION_DIR/candidate-choices.tsv"
+  fi
 }
 
 state_commit_candidate() {
   local candidate="$VEDUP_TRANSACTION_DIR/candidate-state.tsv"
   local resources="$VEDUP_TRANSACTION_DIR/candidate-resources.tsv"
-  local state_tmp="$VEDUP_STATE_DIR/.state.tsv.$$" resources_tmp="$VEDUP_STATE_DIR/.resources.tsv.$$"
+  local choices="$VEDUP_TRANSACTION_DIR/candidate-choices.tsv"
+  local state_tmp="$VEDUP_STATE_DIR/.state.tsv.$$" resources_tmp="$VEDUP_STATE_DIR/.resources.tsv.$$" choices_tmp="$VEDUP_STATE_DIR/.choices.tsv.$$"
   [[ -f "$candidate" && -f "$resources" ]] || return 1
   state_load "$candidate" >/dev/null || return 1
   state_validate_resources "$resources" || return 1
+  if type choices_validate_file >/dev/null 2>&1; then choices_validate_file "$choices" || return 1; fi
   mkdir -p "$VEDUP_STATE_DIR"
+  : > "$VEDUP_TRANSACTION_DIR/state-commit.armed"
+  STATE_COMMIT_ROLLBACK_ARMED=1
   if [ -f "$VEDUP_STATE_FILE" ]; then cp "$VEDUP_STATE_FILE" "$VEDUP_TRANSACTION_DIR/previous-state.tsv"
   else : > "$VEDUP_TRANSACTION_DIR/previous-state.absent"; fi
   if [ -f "$VEDUP_LIVE_RESOURCES_FILE" ]; then cp "$VEDUP_LIVE_RESOURCES_FILE" "$VEDUP_TRANSACTION_DIR/previous-resources.tsv"
   else : > "$VEDUP_TRANSACTION_DIR/previous-resources.absent"; fi
+  if [ -f "$VEDUP_LIVE_CHOICES_FILE" ]; then cp "$VEDUP_LIVE_CHOICES_FILE" "$VEDUP_TRANSACTION_DIR/previous-choices.tsv"
+  else : > "$VEDUP_TRANSACTION_DIR/previous-choices.absent"; fi
   cp "$candidate" "$state_tmp"
   cp "$resources" "$resources_tmp"
-  if ! mv "$resources_tmp" "$VEDUP_LIVE_RESOURCES_FILE" || ! mv "$state_tmp" "$VEDUP_STATE_FILE"; then
+  [ ! -f "$choices" ] || cp "$choices" "$choices_tmp"
+  if ! mv "$resources_tmp" "$VEDUP_LIVE_RESOURCES_FILE"; then
+    state_rollback_commit
+    return 1
+  fi
+  if [ -f "$choices_tmp" ] && ! mv "$choices_tmp" "$VEDUP_LIVE_CHOICES_FILE"; then
+    state_rollback_commit
+    return 1
+  fi
+  if ! mv "$state_tmp" "$VEDUP_STATE_FILE"; then
     state_rollback_commit
     return 1
   fi
@@ -261,26 +290,45 @@ state_commit_candidate() {
 }
 
 state_rollback_commit() {
-  local restore_tmp
+  local transaction="${1:-$VEDUP_TRANSACTION_DIR}" restore_tmp
+  [ -n "$transaction" ] || return 0
+  [ ! -f "$transaction/COMMITTED" ] || return 0
+  [ ! -f "$transaction/state-commit.rolled-back" ] || return 0
   mkdir -p "$VEDUP_STATE_DIR"
-  if [ -f "$VEDUP_TRANSACTION_DIR/previous-state.tsv" ]; then
+  if [ -f "$transaction/previous-state.tsv" ]; then
     restore_tmp="$VEDUP_STATE_DIR/.state.restore.$$"
-    cp "$VEDUP_TRANSACTION_DIR/previous-state.tsv" "$restore_tmp" && mv "$restore_tmp" "$VEDUP_STATE_FILE"
-  elif [ -f "$VEDUP_TRANSACTION_DIR/previous-state.absent" ]; then
+    cp "$transaction/previous-state.tsv" "$restore_tmp" && mv "$restore_tmp" "$VEDUP_STATE_FILE"
+  elif [ -f "$transaction/previous-state.absent" ]; then
     rm -f "$VEDUP_STATE_FILE"
   fi
-  if [ -f "$VEDUP_TRANSACTION_DIR/previous-resources.tsv" ]; then
+  if [ -f "$transaction/previous-resources.tsv" ]; then
     restore_tmp="$VEDUP_STATE_DIR/.resources.restore.$$"
-    cp "$VEDUP_TRANSACTION_DIR/previous-resources.tsv" "$restore_tmp" && mv "$restore_tmp" "$VEDUP_LIVE_RESOURCES_FILE"
-  elif [ -f "$VEDUP_TRANSACTION_DIR/previous-resources.absent" ]; then
+    cp "$transaction/previous-resources.tsv" "$restore_tmp" && mv "$restore_tmp" "$VEDUP_LIVE_RESOURCES_FILE"
+  elif [ -f "$transaction/previous-resources.absent" ]; then
     rm -f "$VEDUP_LIVE_RESOURCES_FILE"
   fi
-  rm -f "$VEDUP_STATE_DIR/.state.tsv.$$" "$VEDUP_STATE_DIR/.resources.tsv.$$"
+  if [ -f "$transaction/previous-choices.tsv" ]; then
+    restore_tmp="$VEDUP_STATE_DIR/.choices.restore.$$"
+    cp "$transaction/previous-choices.tsv" "$restore_tmp" && mv "$restore_tmp" "$VEDUP_LIVE_CHOICES_FILE"
+  elif [ -f "$transaction/previous-choices.absent" ]; then
+    rm -f "$VEDUP_LIVE_CHOICES_FILE"
+  fi
+  rm -f "$VEDUP_STATE_DIR/.state.tsv.$$" "$VEDUP_STATE_DIR/.resources.tsv.$$" "$VEDUP_STATE_DIR/.choices.tsv.$$"
+  : > "$transaction/state-commit.rolled-back"
+  STATE_COMMIT_ROLLBACK_ARMED=0
   state_journal state rolled-back "Live state restored because release activation failed"
 }
 
+state_transaction_is_committed() {
+  [ -n "${VEDUP_TRANSACTION_DIR:-}" ] && [ -f "$VEDUP_TRANSACTION_DIR/COMMITTED" ]
+}
+
 state_complete_transaction() {
+  local temporary="$VEDUP_TRANSACTION_DIR/.COMMITTED.$$"
+  printf '%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$temporary"
+  mv "$temporary" "$VEDUP_TRANSACTION_DIR/COMMITTED"
   state_journal transaction complete "State committed and release activated after doctor"
+  STATE_COMMIT_ROLLBACK_ARMED=0
 }
 
 state_resource_owner() {

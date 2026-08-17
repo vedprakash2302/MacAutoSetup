@@ -71,7 +71,7 @@ plan_command_resource() {
 }
 
 plan_mise_manager() {
-  local owner previous_desired installed_mise="$HOME/.local/bin/mise"
+  local owner previous_desired installed_mise="$HOME/.local/bin/mise" observed_version
   owner="$(plan_previous_owner mise)"
   previous_desired="$(state_resource_desired mise 2>/dev/null || true)"
   if ! inventory_command_exists mise; then
@@ -79,6 +79,19 @@ plan_mise_manager() {
   elif [ "$owner" = vedup-managed ] && { [ "$previous_desired" != "$MISE_VERSION" ] || \
     [ ! -x "$installed_mise" ] || ! "$installed_mise" --version 2>/dev/null | grep -Eq "(^| )${MISE_VERSION}([ +]|$)"; }; then
     plan_add update mise direct vedup-managed installed "$MISE_VERSION" "Atomically update managed Mise"
+  elif [ "$owner" != vedup-managed ]; then
+    if [ -n "${VEDUP_TEST_INVENTORY_FILE:-}" ]; then
+      plan_add keep mise direct external installed compatible "Retain fixture-provided compatible Mise"
+    else
+      observed_version="$(mise --version 2>/dev/null | sed -E 's/^[^0-9]*([0-9]+\.[0-9]+\.[0-9]+).*/\1/' || true)"
+      if [ -n "$observed_version" ] && version_at_least "$observed_version" "$MISE_VERSION" && \
+        mise help install >/dev/null 2>&1 && mise help trust >/dev/null 2>&1; then
+        plan_add keep mise direct external "$observed_version" compatible "Retain compatible external Mise"
+      else
+        plan_add review mise direct unmanaged-conflict "${observed_version:-unknown}" "$MISE_VERSION" \
+          "Preserve incompatible external Mise; update or move it aside before Vedup installs its pinned provider"
+      fi
+    fi
   else
     [ "$owner" = vedup-managed ] || owner=external
     plan_add keep mise direct "$owner" installed "$MISE_VERSION" "Retain compatible Mise"
@@ -96,7 +109,7 @@ plan_macos_formula() {
 }
 
 plan_macos_cask() {
-  local cask="$1" token="${1##*/}" resource="homebrew-cask:${1##*/}" owner
+  local cask="$1" token="${1##*/}" resource="homebrew-cask:$1" owner
   if inventory_package_installed cask "$token"; then
     owner="$(plan_existing_owner "$resource")"
     if plan_app_upgrade_selected "$token" && plan_cask_outdated "$token"; then
@@ -158,10 +171,12 @@ plan_previous_vedup_link() {
   [ -L "$target" ] || return 1
   link="$(readlink "$target")"
   case "$link" in
-    *MacAutoSetup/dotfiles/*|*macautosetup/repo/dotfiles/*|*/vedup/releases/*/dotfiles/*|*/vedup/current/dotfiles/*) return 0 ;;
+    *MacAutoSetup/dotfiles/*|*macautosetup/repo/dotfiles/*|*/vedup/releases/*/dotfiles/*|*/vedup/current/dotfiles/*|*/vedup/config/worktree/*) return 0 ;;
     *) return 1 ;;
   esac
 }
+
+plan_previous_vedup_command() { vedup_launcher_is_managed "$1"; }
 
 plan_dotfile_parent_status() {
   local relative="$1" current="$HOME" part prefix="" status=clean
@@ -183,18 +198,27 @@ plan_dotfile_parent_status() {
 }
 
 plan_dotfiles() {
-  local package package_dir source relative target parent_status changed=0 conflicts=0
+  local package package_dir source managed_source relative target parent_status changed=0 conflicts=0
   if ! has find; then
     plan_add configure dotfiles stow vedup-managed pending-foundations managed-links \
       "Inspect and link Vedup configuration after the planned findutils installation"
     return 0
   fi
+  config_scan
+  if [ "$CONFIG_CONFLICT_COUNT" -gt 0 ]; then
+    plan_add review config-workspace stow unmanaged-conflict "$CONFIG_CONFLICT_COUNT conflicting paths" merge-required \
+      "Preserve local configuration; review files changed both locally and by this release"
+    return 0
+  fi
+  [ "$CONFIG_NEEDS_UPDATE" = 0 ] || changed=1
   for package in "${STOW_PACKAGES[@]}"; do
-    package_dir="$REPO_ROOT/dotfiles/$package"
+    if [ -d "$VEDUP_CONFIG_WORKTREE/$package" ]; then package_dir="$VEDUP_CONFIG_WORKTREE/$package"
+    else package_dir="$REPO_ROOT/dotfiles/$package"; fi
     [[ -d "$package_dir" ]] || { plan_add conflict "dotfiles:$package" stow unmanaged-conflict missing required "Selected dotfile package is absent"; continue; }
     while IFS= read -r -d '' source; do
       relative="${source#"$package_dir"/}"
       target="$HOME/$relative"
+      managed_source="$VEDUP_CONFIG_WORKTREE/$package/$relative"
       parent_status="$(plan_dotfile_parent_status "$relative")"
       if [ "$parent_status" = conflict ]; then
         conflicts=$((conflicts + 1))
@@ -202,7 +226,7 @@ plan_dotfiles() {
       elif [ "$parent_status" = managed ]; then
         changed=1
       fi
-      if [[ -L "$target" ]] && [[ "$target" -ef "$source" ]]; then
+      if [[ -L "$target" ]] && [[ -e "$managed_source" ]] && [[ "$target" -ef "$managed_source" ]]; then
         continue
       elif plan_previous_vedup_link "$target"; then
         changed=1
@@ -346,7 +370,8 @@ plan_mise_tools() {
 }
 
 plan_generate() {
-  local package formula cask current_login_shell
+  local package formula cask current_login_shell app_scope app_provider app_identifier app_label app_description
+  local selected_mas_apps=0 selected_mas_formula=0
   local -a macos_check_args
   plan_reset
   state_detect_workflow
@@ -387,17 +412,21 @@ plan_generate() {
     plan_mise_tools
     [[ "$SKIP_PLUGINS" == 1 ]] || plan_plugins
 
-    if [[ "$PROFILE" == workstation && "$OS" == macos ]]; then
-      for formula in bitwarden-cli mas FelixKratz/formulae/borders; do plan_macos_formula "$formula"; done
-      for cask in cursor ghostty raycast docker-desktop nikitabobko/tap/aerospace font-jetbrains-mono-nerd-font chatgpt zed thebrowsercompany-dia google-chrome shottr jump-desktop hiddenbar logi-options+; do plan_macos_cask "$cask"; done
-      plan_mas_app 937984704 Amphetamine
-      plan_mas_app 1554235898 Peek
-    fi
-
-    if [[ "$OS" == macos && "$WITH_PERSONAL_APPS" == 1 ]]; then
-      for formula in lazysql wget; do plan_macos_formula "$formula"; done
-      for cask in ankerwork caffeine craft flux-app focus warp; do plan_macos_cask "$cask"; done
-      plan_mas_app 1552826194 MyWallpaper
+    if [[ "$OS" == macos ]]; then
+      while IFS=$'\t' read -r app_scope app_provider app_identifier app_label app_description; do
+        case "$app_provider" in
+          formula)
+            plan_macos_formula "$app_identifier"
+            [ "${app_identifier##*/}" != mas ] || selected_mas_formula=1
+            ;;
+          cask) plan_macos_cask "$app_identifier" ;;
+          mas)
+            selected_mas_apps=1
+            plan_mas_app "$app_identifier" "$app_label"
+            ;;
+        esac
+      done < <(apps_each_selected)
+      if [ "$selected_mas_apps" = 1 ] && [ "$selected_mas_formula" = 0 ]; then plan_macos_formula mas; fi
     fi
 
     if [[ "$WITH_DOCKER" == 1 && "$OS" == linux ]]; then
@@ -442,6 +471,23 @@ plan_generate() {
     fi
   else
     plan_add keep login-shell chsh external current current "Leave the login shell unchanged"
+  fi
+
+  if [ -f "$HOME/.local/bin/vedup" ] && grep -Fqx '# vedup-managed-launcher-v2' "$HOME/.local/bin/vedup" 2>/dev/null; then
+    plan_add keep vedup-command launcher vedup-managed installed current "Vedup command launcher is available on PATH"
+  elif [ ! -e "$HOME/.local/bin/vedup" ] && [ ! -L "$HOME/.local/bin/vedup" ]; then
+    plan_add configure vedup-command launcher vedup-managed missing current "Install the stable Vedup command launcher"
+  elif plan_previous_vedup_command "$HOME/.local/bin/vedup"; then
+    plan_add configure vedup-command launcher vedup-managed previous current "Replace the legacy Vedup dispatcher with the stable launcher"
+  else
+    plan_add review vedup-command launcher unmanaged-conflict present current \
+      "Preserve the existing ~/.local/bin/vedup path; move it aside before Vedup manages this command"
+  fi
+
+  if type choices_match_file >/dev/null 2>&1 && choices_match_file "$VEDUP_CHOICES_FILE"; then
+    plan_add keep application-choices state vedup-managed saved selected "Saved setup and application choices are current"
+  else
+    plan_add configure application-choices state vedup-managed current selected "Save the selected setup and application choices"
   fi
 
   plan_retain_unselected_resources

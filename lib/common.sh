@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2016
 
 if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
   SETUP_GREEN='\033[38;5;42m' SETUP_YELLOW='\033[38;5;214m' SETUP_RED='\033[38;5;196m'
@@ -21,6 +22,33 @@ die() {
   exit 1
 }
 has() { command -v "$1" >/dev/null 2>&1; }
+
+vedup_launcher_is_managed() {
+  local target="$1" link
+  if [ -L "$target" ]; then
+    link="$(readlink "$target")"
+    case "$link" in
+      *MacAutoSetup/bin/vedup|*macautosetup/repo/bin/vedup|*/vedup/releases/*/bin/vedup|*/vedup/current/bin/vedup) return 0 ;;
+    esac
+    return 1
+  fi
+  [ -f "$target" ] && grep -Fqx '# vedup-managed-launcher-v2' "$target" 2>/dev/null
+}
+
+vedup_install_launcher() {
+  local target="${1:-$HOME/.local/bin/vedup}" temporary
+  mkdir -p "$(dirname "$target")"
+  temporary="$(dirname "$target")/.vedup-launcher.new.$$"
+  {
+    printf '%s\n' '#!/usr/bin/env bash' '# vedup-managed-launcher-v2' '' 'set -Eeuo pipefail'
+    printf '%s\n' 'current="${XDG_DATA_HOME:-$HOME/.local/share}/vedup/current"'
+    printf '%s\n' 'entry="$current/bin/vedup"'
+    printf '%s\n' '[ -x "$entry" ] || { printf '\''Vedup is incomplete: %s is unavailable. Rerun the Vedup bootstrap.\n'\'' "$entry" >&2; exit 1; }'
+    printf '%s\n' 'exec "$entry" "$@"'
+  } > "$temporary"
+  chmod 0755 "$temporary"
+  mv "$temporary" "$target"
+}
 
 # Hermetic tests provide a TSV inventory instead of observing the host package
 # database. Production runs never set VEDUP_TEST_INVENTORY_FILE.
@@ -82,31 +110,54 @@ setup_lock_release() {
 }
 
 setup_cleanup() {
-  local exit_code="$?" macos_backup_path
+  local exit_code="$?" macos_backup_path transaction_committed=0
   trap - EXIT INT TERM
   set +e
   progress_stop_activity
   if type plan_cleanup >/dev/null 2>&1; then plan_cleanup; fi
   if type state_cleanup >/dev/null 2>&1; then state_cleanup; fi
   if [ "$exit_code" -ne 0 ] && [ "${SETUP_SUCCESS:-0}" != 1 ]; then
-    if type dotfiles_rollback >/dev/null 2>&1; then dotfiles_rollback; fi
-    if [ -r "${VEDUP_MACOS_ROLLBACK_FILE:-}" ]; then
-      macos_backup_path="$(sed -n '1p' "$VEDUP_MACOS_ROLLBACK_FILE")"
-      case "$macos_backup_path" in
-        "${VEDUP_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/vedup}"/macos-preferences/*)
-          warn "Restoring macOS preferences after the interrupted synchronization."
-          "$REPO_ROOT/bin/macos-restore" "$macos_backup_path" || true
-          ;;
-      esac
-      rm -f "$VEDUP_MACOS_ROLLBACK_FILE"
-    fi
-    if type state_journal >/dev/null 2>&1 && [ -n "${VEDUP_TRANSACTION_DIR:-}" ]; then
-      state_journal transaction failed "Setup exited with status $exit_code"
+    if type state_transaction_is_committed >/dev/null 2>&1 && state_transaction_is_committed; then transaction_committed=1; fi
+    if [ "$transaction_committed" = 1 ]; then
+      warn "Synchronization committed successfully; cleanup was interrupted and will finish on the next Vedup run."
+    else
+      if type dotfiles_rollback >/dev/null 2>&1; then dotfiles_rollback; fi
+      if type config_rollback_workspace >/dev/null 2>&1; then config_rollback_workspace; fi
+      if type plugins_rollback >/dev/null 2>&1; then plugins_rollback; fi
+      if type vedup_command_rollback >/dev/null 2>&1; then vedup_command_rollback; fi
+      if type release_pointers_rollback >/dev/null 2>&1; then release_pointers_rollback; fi
+      if type state_rollback_commit >/dev/null 2>&1 && [ "${STATE_COMMIT_ROLLBACK_ARMED:-0}" = 1 ]; then state_rollback_commit; fi
+      if [ -r "${VEDUP_MACOS_ROLLBACK_FILE:-}" ]; then
+        macos_backup_path="$(sed -n '1p' "$VEDUP_MACOS_ROLLBACK_FILE")"
+        case "$macos_backup_path" in
+          "${VEDUP_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/vedup}"/macos-preferences/*)
+            warn "Restoring macOS preferences after the interrupted synchronization."
+            "$REPO_ROOT/bin/macos-restore" "$macos_backup_path" || true
+            ;;
+        esac
+        rm -f "$VEDUP_MACOS_ROLLBACK_FILE"
+      fi
+      if type state_journal >/dev/null 2>&1 && [ -n "${VEDUP_TRANSACTION_DIR:-}" ]; then
+        state_journal transaction rolled-back "Setup exited with status $exit_code; reversible changes restored"
+      fi
     fi
   fi
   sudo_release
   setup_lock_release
   return "$exit_code"
+}
+
+version_at_least() {
+  local actual="$1" required="$2"
+  awk -v actual="$actual" -v required="$required" 'BEGIN {
+    split(actual, a, /[^0-9]+/); split(required, r, /[^0-9]+/)
+    for (i=1; i<=4; i++) {
+      av=a[i]+0; rv=r[i]+0
+      if (av > rv) exit 0
+      if (av < rv) exit 1
+    }
+    exit 0
+  }'
 }
 
 setup_lock_acquire() {
@@ -421,15 +472,16 @@ progress_failed() {
   local was_compact="${PROGRESS_COMPACT:-0}"
   trap - ERR
   [ "$was_compact" != 1 ] || progress_restore_terminal
-  printf '\n%b✗ %s failed%b near line %s (exit %s).\n' "$SETUP_RED" "$PROGRESS_STAGE_NAME" "$SETUP_RESET" "$line" "$code" >&2
+  printf '\n%b✗ Vedup stopped while %s.%b\n' "$SETUP_RED" "$PROGRESS_STAGE_NAME" "$SETUP_RESET" >&2
   if [ -n "${SETUP_LOG_FILE:-}" ] && [ "${DRY_RUN:-0}" != 1 ]; then
     if [ "$was_compact" = 1 ]; then
-      printf '\nRecent log output:\n' >&2
+      printf '\nLast activity:\n' >&2
       tail -n 18 "$SETUP_LOG_FILE" | sed 's/^/  │ /' >&2
       printf '\n' >&2
     fi
     printf '  Detailed log: %s\n' "$SETUP_LOG_FILE" >&2
-    printf '  Setup is idempotent; correct the problem and rerun the same command.\n' >&2
+    printf '  Exit %s near internal line %s. Your previous working setup remains active.\n' "$code" "$line" >&2
+    printf '  Fix the reported issue, then run vedup sync or the one-line installer again.\n' >&2
   fi
   exit "$code"
 }
@@ -439,11 +491,11 @@ progress_finish() {
   local warning_count
   progress_restore_terminal
   if [ "${DRY_RUN:-0}" = 1 ]; then
-    printf '\n%b╭─ Dry-run complete ─────────────────────────────────────────╮%b\n' "$SETUP_PURPLE" "$SETUP_RESET"
-    printf '  %s stage(s) previewed; no machine changes were made.\n' "$PROGRESS_CURRENT"
+    printf '\n%b╭─ Preview ready ────────────────────────────────────────────╮%b\n' "$SETUP_PURPLE" "$SETUP_RESET"
+    printf '  No machine changes were made.\n'
   else
-    printf '\n%b╭─ Setup complete ───────────────────────────────────────────╮%b\n' "$SETUP_GREEN" "$SETUP_RESET"
-    printf '  %b✓%b %s stage(s) finished successfully.\n' "$SETUP_GREEN" "$SETUP_RESET" "$PROGRESS_CURRENT"
+    printf '\n%b╭─ Your machine is ready ────────────────────────────────────╮%b\n' "$SETUP_GREEN" "$SETUP_RESET"
+    printf '  %b✓%b Vedup finished successfully.\n' "$SETUP_GREEN" "$SETUP_RESET"
   fi
   if [ "${DRY_RUN:-0}" != 1 ]; then
     printf 'Detailed log: %s\n' "$SETUP_LOG_FILE"
@@ -454,7 +506,7 @@ progress_finish() {
     if [ -r "${PLAN_FILE:-}" ]; then
       external_count="$(awk -F '\t' '$1 == "keep" && $4 == "external" { count++ } END { print count+0 }' "$PLAN_FILE")"
       retained_count="$(awk -F '\t' '$2 ~ /^retained:/ { count++ } END { print count+0 }' "$PLAN_FILE")"
-      printf 'Resources: %s installed, %s updated, %s configured, %s unchanged.\n' \
+      printf 'Changes: %s installed, %s updated, %s configured; %s already ready.\n' \
         "${PLAN_INSTALL_COUNT:-0}" "${PLAN_UPDATE_COUNT:-0}" "${PLAN_CONFIGURE_COUNT:-0}" "${PLAN_KEEP_COUNT:-0}"
       [ "$external_count" -eq 0 ] || printf 'Retained external software: %s resource(s).\n' "$external_count"
       [ "$retained_count" -eq 0 ] || printf 'Retained but unselected: %s resource(s); see the plan for manual removal guidance.\n' "$retained_count"
@@ -481,6 +533,7 @@ progress_finish() {
     fi
   fi
   printf '%bNext:%b open a new terminal to use the configured shell and PATH.\n' "$SETUP_CYAN" "$SETUP_RESET"
+  printf 'Run %bvedup%b any time to sync, update Vedup, customize, save, or diagnose.\n' "$SETUP_BOLD" "$SETUP_RESET"
   printf '%b╰────────────────────────────────────────────────────────────╯%b\n' "$([ "${DRY_RUN:-0}" = 1 ] && printf '%s' "$SETUP_PURPLE" || printf '%s' "$SETUP_GREEN")" "$SETUP_RESET"
 }
 

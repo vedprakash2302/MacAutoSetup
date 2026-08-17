@@ -8,6 +8,7 @@ MINIMAL_DOCK=0
 KEYBOARD_SHORTCUTS=0
 EXPERIMENTAL=0
 MACOS_CHECK_ONLY=0
+APPLY_CORE=1
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -16,6 +17,7 @@ while [ "$#" -gt 0 ]; do
     --keyboard-shortcuts) KEYBOARD_SHORTCUTS=1 ;;
     --experimental) EXPERIMENTAL=1 ;;
     --check) MACOS_CHECK_ONLY=1 ;;
+    --advanced-only) APPLY_CORE=0 ;;
     *) printf 'Unknown macOS settings option: %s\n' "$1" >&2; exit 2 ;;
   esac
   shift
@@ -29,7 +31,7 @@ if [ "${MACAUTOSETUP_TEST_OS:-}" != macos ] && [ "$(uname -s)" != Darwin ]; then
 fi
 
 list_touched_keys() {
-  MACOS_LIST_KEYS=1 "$SCRIPT_DIR/settings/core.sh"
+  [ "$APPLY_CORE" = 0 ] || MACOS_LIST_KEYS=1 "$SCRIPT_DIR/settings/core.sh"
   [ "$MINIMAL_DOCK" = 1 ] && MACOS_LIST_KEYS=1 "$SCRIPT_DIR/settings/minimal-dock.sh"
   [ "$KEYBOARD_SHORTCUTS" = 1 ] && MACOS_LIST_KEYS=1 "$SCRIPT_DIR/settings/keyboard-shortcuts.sh"
   [ "$EXPERIMENTAL" = 1 ] && MACOS_LIST_KEYS=1 "$SCRIPT_DIR/settings/experimental.sh"
@@ -37,7 +39,7 @@ list_touched_keys() {
 }
 
 if [ "$MACOS_CHECK_ONLY" = 1 ]; then
-  "$SCRIPT_DIR/settings/core.sh"
+  [ "$APPLY_CORE" = 0 ] || "$SCRIPT_DIR/settings/core.sh"
   [ "$MINIMAL_DOCK" = 1 ] && "$SCRIPT_DIR/settings/minimal-dock.sh"
   [ "$KEYBOARD_SHORTCUTS" = 1 ] && "$SCRIPT_DIR/settings/keyboard-shortcuts.sh"
   [ "$EXPERIMENTAL" = 1 ] && "$SCRIPT_DIR/settings/experimental.sh"
@@ -59,7 +61,7 @@ else
   trap rollback_preferences ERR
 fi
 
-"$SCRIPT_DIR/settings/core.sh"
+[ "$APPLY_CORE" = 0 ] || "$SCRIPT_DIR/settings/core.sh"
 [ "$MINIMAL_DOCK" = 1 ] && "$SCRIPT_DIR/settings/minimal-dock.sh"
 [ "$KEYBOARD_SHORTCUTS" = 1 ] && "$SCRIPT_DIR/settings/keyboard-shortcuts.sh"
 [ "$EXPERIMENTAL" = 1 ] && "$SCRIPT_DIR/settings/experimental.sh"

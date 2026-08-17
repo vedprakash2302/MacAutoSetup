@@ -45,7 +45,7 @@ is_previous_vedup_link() {
   [ -L "$target" ] || return 1
   link="$(readlink "$target")"
   case "$link" in
-    *MacAutoSetup/dotfiles/*|*macautosetup/repo/dotfiles/*|*/vedup/releases/*/dotfiles/*|*/vedup/current/dotfiles/*) return 0 ;;
+    *MacAutoSetup/dotfiles/*|*macautosetup/repo/dotfiles/*|*/vedup/releases/*/dotfiles/*|*/vedup/current/dotfiles/*|*/vedup/config/worktree/*) return 0 ;;
     *) return 1 ;;
   esac
 }
@@ -84,7 +84,7 @@ prepare_parent_path() {
 
 prepare_package_conflicts() {
   local package="$1" package_dir source relative target
-  package_dir="$REPO_ROOT/dotfiles/$package"
+  package_dir="$DOTFILES_ROOT/$package"
   [ -d "$package_dir" ] || die "Dotfile package does not exist: $package"
 
   while IFS= read -r -d '' source; do
@@ -93,6 +93,7 @@ prepare_package_conflicts() {
     prepare_parent_path "$relative"
 
     if is_managed_link "$target" "$source"; then
+      [ "${DRY_RUN:-0}" = 1 ] || dotfiles_record link "$target" "$(readlink "$target")"
       continue
     elif is_previous_vedup_link "$target"; then
       replace_previous_link "$target"
@@ -106,13 +107,13 @@ prepare_package_conflicts() {
 dotfiles_preflight() {
   local package preflight_dir
   for package in "${STOW_PACKAGES[@]}"; do
-    [ -d "$REPO_ROOT/dotfiles/$package" ] || die "Dotfile package does not exist: $package"
+    [ -d "$DOTFILES_ROOT/$package" ] || die "Dotfile package does not exist: $package"
   done
   [ "${DRY_RUN:-0}" = 1 ] && return 0
   if [ ! -d "$HOME" ] || [ ! -w "$HOME" ]; then die "The home directory is not writable: $HOME"; fi
   preflight_dir="$(mktemp -d "${TMPDIR:-/tmp}/vedup-stow-preflight.XXXXXX")"
   if ! stow --simulate --no-folding --restow --target="$preflight_dir" \
-      --dir="$REPO_ROOT/dotfiles" "${STOW_PACKAGES[@]}" >/dev/null 2>&1; then
+      --dir="$DOTFILES_ROOT" "${STOW_PACKAGES[@]}" >/dev/null 2>&1; then
     rm -rf "$preflight_dir"
     die "Stow preflight failed before any configuration was moved."
   fi
@@ -127,7 +128,7 @@ dotfiles_rollback() {
   warn "Restoring dotfile links and conflicts from the interrupted synchronization."
 
   for package in "${STOW_PACKAGES[@]}"; do
-    stow --no-folding --delete --target="$HOME" --dir="$REPO_ROOT/dotfiles" "$package" >/dev/null 2>&1 || true
+    stow --no-folding --delete --target="$HOME" --dir="$DOTFILES_ROOT" "$package" >/dev/null 2>&1 || true
   done
 
   while IFS= read -r entry; do entries+=("$entry"); done < "$DOTFILES_ROLLBACK_MANIFEST"
@@ -177,7 +178,7 @@ setup_dotfiles() {
 
   for package in "${STOW_PACKAGES[@]}"; do
     log "Linking $package dotfiles"
-    if ! run stow --no-folding --restow --target="$HOME" --dir="$REPO_ROOT/dotfiles" "$package"; then
+    if ! run stow --no-folding --restow --target="$HOME" --dir="$DOTFILES_ROOT" "$package"; then
       dotfiles_rollback
       return 1
     fi
