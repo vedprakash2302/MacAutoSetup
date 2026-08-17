@@ -42,7 +42,10 @@ brew_install_missing_formulae() {
   local -a missing=()
   for formula in "$@"; do
     token="${formula##*/}"
-    if inventory_package_installed formula "$token"; then :; else missing+=("$formula"); fi
+    if inventory_package_installed formula "$token"; then :; else
+      type brew_trust_scoped_package >/dev/null 2>&1 && brew_trust_scoped_package formula "$formula"
+      missing+=("$formula")
+    fi
   done
   [ "${#missing[@]}" -gt 0 ] || return 0
   if [ "${DRY_RUN:-0}" = 1 ]; then
@@ -54,22 +57,86 @@ brew_install_missing_formulae() {
   fi
 }
 
-brew_bundle_missing_only() {
-  local brewfile="$1"
+brew_trust_scoped_package() {
+  local provider="$1" identifier="$2"
+  case "$provider:$identifier" in
+    cask:nikitabobko/tap/aerospace)
+      run brew trust --cask nikitabobko/tap/aerospace
+      ;;
+    formula:FelixKratz/formulae/borders)
+      run brew trust --formula FelixKratz/formulae/borders
+      ;;
+    formula:jorgerojas26/lazysql/lazysql)
+      run brew trust --formula jorgerojas26/lazysql/lazysql
+      ;;
+  esac
+}
+
+brew_install_missing_casks() {
+  local cask token
+  local -a missing=()
+  for cask in "$@"; do
+    token="${cask##*/}"
+    if inventory_package_installed cask "$token"; then :; else
+      brew_trust_scoped_package cask "$cask"
+      missing+=("$cask")
+    fi
+  done
+  [ "${#missing[@]}" -gt 0 ] || return 0
   if [ "${DRY_RUN:-0}" = 1 ]; then
-    printf '[dry-run] HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_BUNDLE_NO_UPGRADE=1 brew bundle --no-upgrade --file %q\n' "$brewfile"
+    printf '[dry-run] HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_UPGRADE=1 brew install --cask'
+    quote_command "${missing[@]}"
   else
     retry_command 3 2 env HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_UPGRADE=1 \
-      HOMEBREW_BUNDLE_NO_UPGRADE=1 brew bundle --no-upgrade --file "$brewfile"
+      brew install --cask "${missing[@]}"
   fi
+}
+
+platform_install_app_scope() {
+  local wanted="$1" _scope provider identifier label _label _description installed_ids="" has_mas_formula=0 has_mas_apps=0
+  local -a formulae=() casks=()
+  while IFS=$'\t' read -r _scope provider identifier _label _description; do
+    case "$provider" in
+      formula)
+        formulae+=("$identifier")
+        [ "${identifier##*/}" != mas ] || has_mas_formula=1
+        ;;
+      cask) casks+=("$identifier") ;;
+      mas) has_mas_apps=1 ;;
+    esac
+  done < <(apps_each_selected | awk -F '\t' -v wanted="$wanted" '$1 == wanted')
+  if [ "$has_mas_apps" = 1 ] && [ "$has_mas_formula" = 0 ]; then formulae+=(mas); fi
+  [ "${#formulae[@]}" -eq 0 ] || brew_install_missing_formulae "${formulae[@]}"
+  [ "${#casks[@]}" -eq 0 ] || brew_install_missing_casks "${casks[@]}"
+
+  if [ "${DRY_RUN:-0}" = 1 ]; then
+    while IFS=$'\t' read -r _scope provider identifier label _description; do
+      [ "$provider" = mas ] || continue
+      plan_has_action_for_resource "mas:$identifier" || continue
+      run mas install "$identifier"
+    done < <(apps_each_selected | awk -F '\t' -v wanted="$wanted" '$1 == wanted')
+    return 0
+  fi
+
+  inventory_command_exists mas || return 0
+  if ! installed_ids="$(mas list 2>/dev/null | awk '{print $1}')"; then
+    warn "Mac App Store applications are pending. Sign in to the App Store, then rerun Safe sync."
+    return 0
+  fi
+  while IFS=$'\t' read -r _scope provider identifier label _description; do
+    [ "$provider" = mas ] || continue
+    printf '%s\n' "$installed_ids" | grep -Fxq "$identifier" && continue
+    if ! run mas install "$identifier"; then
+      warn "$label could not be installed from the App Store; sign in or accept updated store terms, then rerun."
+    fi
+  done < <(apps_each_selected | awk -F '\t' -v wanted="$wanted" '$1 == wanted')
 }
 
 brew_upgrade_selected_apps() {
   [ "${UPGRADE_APPS:-0}" = 1 ] || [ -n "${VEDUP_SELECTED_APP_UPGRADES:-}" ] || return 0
-  local cask token
-  local -a casks=(cursor ghostty raycast docker-desktop aerospace font-jetbrains-mono-nerd-font chatgpt zed thebrowsercompany-dia google-chrome shottr jump-desktop hiddenbar logi-options+)
-  [ "${WITH_PERSONAL_APPS:-0}" = 1 ] && casks+=(ankerwork caffeine craft flux-app focus warp)
-  for cask in "${casks[@]}"; do
+  local cask token _scope provider label _description
+  while IFS=$'\t' read -r _scope provider cask label _description; do
+    [ "$provider" = cask ] || continue
     token="${cask##*/}"
     if [ "${UPGRADE_APPS:-0}" != 1 ]; then
       case " ${VEDUP_SELECTED_APP_UPGRADES:-} " in *" $token "*) ;; *) continue ;; esac
@@ -77,7 +144,7 @@ brew_upgrade_selected_apps() {
     brew list --cask "$token" >/dev/null 2>&1 || continue
     plan_cask_outdated "$token" || continue
     retry_command 3 2 run env HOMEBREW_NO_AUTO_UPDATE=1 brew upgrade --cask "$token"
-  done
+  done < <(apps_each_selected)
 }
 
 platform_install_foundations() {
@@ -87,15 +154,12 @@ platform_install_foundations() {
 }
 
 platform_install_workstation() {
-  brew_bundle_missing_only "$REPO_ROOT/profiles/macos/Brewfile.workstation"
-  run "$REPO_ROOT/dotfiles/macos/mas.sh"
+  platform_install_app_scope workstation
   brew_upgrade_selected_apps
 }
 
 platform_install_personal_apps() {
-  brew_bundle_missing_only "$REPO_ROOT/profiles/macos/Brewfile.optional"
-  brew_install_missing_formulae mas
-  run "$REPO_ROOT/dotfiles/macos/mas-optional.sh"
+  platform_install_app_scope optional
   brew_upgrade_selected_apps
 }
 

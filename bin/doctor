@@ -8,8 +8,14 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 . "$REPO_ROOT/versions.env"
 # shellcheck disable=SC1091
 . "$REPO_ROOT/lib/state.sh"
-export PATH="$HOME/.local/bin:$HOME/.local/share/mise/shims:$PATH"
-export MISE_CONFIG_FILE="$REPO_ROOT/mise.toml"
+# shellcheck disable=SC1091
+. "$REPO_ROOT/lib/choices.sh"
+# shellcheck disable=SC1091
+. "$REPO_ROOT/lib/apps.sh"
+# shellcheck disable=SC1091
+. "$REPO_ROOT/lib/config.sh"
+export PATH="$HOME/.local/share/mise/shims:$HOME/.local/bin:$PATH"
+export MISE_CONFIG_FILE="${VEDUP_APPLIED_RELEASE:-$REPO_ROOT}/mise.toml"
 failures=0
 QUICK=0
 DOTFILES_ONLY=0
@@ -37,9 +43,10 @@ plugin_destination() {
 
 verify_dotfile_links() {
   local package package_dir source relative target
+  DOTFILES_ROOT="$(config_dotfiles_root)"
   read -r -a doctor_packages <<< "$STATE_STOW_PACKAGES"
   for package in "${doctor_packages[@]}"; do
-    package_dir="$REPO_ROOT/dotfiles/$package"
+    package_dir="$DOTFILES_ROOT/$package"
     [ -d "$package_dir" ] || { fail "managed dotfile package is missing: $package"; continue; }
     while IFS= read -r -d '' source; do
       relative="${source#"$package_dir"/}"
@@ -59,6 +66,10 @@ else
 fi
 if state_validate_resources "$VEDUP_RESOURCES_FILE"; then ok "resource ownership inventory is valid"
 else fail "resource ownership inventory is missing or invalid: $VEDUP_RESOURCES_FILE"; fi
+if apps_manifest_validate; then ok "macOS application manifest is valid and deduplicated"
+else fail "macOS application manifest is invalid: $VEDUP_MACOS_APPS_MANIFEST"; fi
+if choices_validate_file "$VEDUP_CHOICES_FILE" && choices_load "$VEDUP_CHOICES_FILE"; then ok "saved component and application choices are valid data"
+else fail "saved choices are missing or invalid: $VEDUP_CHOICES_FILE"; fi
 
 if [ "${STATE_PLATFORM:-}" = macos ]; then
   git_path="$(command -v git 2>/dev/null || true)"
@@ -85,6 +96,13 @@ if [ "$QUICK" != 1 ] && [ "$DOTFILES_ONLY" != 1 ]; then
 fi
 
 if [ "$STATE_FOUND" = 1 ]; then verify_dotfile_links; fi
+if [ -f "$HOME/.local/bin/vedup" ] && grep -Fqx '# vedup-managed-launcher-v2' "$HOME/.local/bin/vedup" 2>/dev/null; then
+  ok "Vedup command launcher is installed"
+elif [ -L "$HOME/.local/bin/vedup" ]; then
+  note "Legacy Vedup command symlink is installed and will be replaced by the stable launcher"
+else
+  fail "Vedup command launcher is missing from ~/.local/bin"
+fi
 
 if [ "$QUICK" != 1 ] && [ "$STATE_FOUND" = 1 ]; then
   while IFS=$'\t' read -r resource_action resource_id resource_provider resource_owner resource_current resource_desired resource_description; do
@@ -108,7 +126,11 @@ if [ "$QUICK" != 1 ] && [ "$STATE_FOUND" = 1 ]; then
         ;;
       mas:*)
         mas_id="${resource_id#mas:}"
-        mas list 2>/dev/null | awk '{print $1}' | grep -Fxq "$mas_id" && ok "App Store ID $mas_id is installed" || fail "App Store ID $mas_id is missing"
+        if mas list 2>/dev/null | awk '{print $1}' | grep -Fxq "$mas_id"; then
+          ok "App Store ID $mas_id is installed"
+        else
+          note "App Store ID $mas_id is pending; sign in to the App Store and rerun Safe sync"
+        fi
         ;;
       system-package:*)
         system_package="${resource_id#system-package:}"
@@ -120,7 +142,7 @@ if [ "$QUICK" != 1 ] && [ "$STATE_FOUND" = 1 ]; then
         ;;
       mise-tool:*)
         mise_tool="${resource_provider#mise:}"
-        if MISE_CONFIG_FILE="$REPO_ROOT/mise.toml" mise where "$mise_tool@$resource_desired" >/dev/null 2>&1; then
+        if MISE_CONFIG_FILE="$MISE_CONFIG_FILE" mise where "$mise_tool@$resource_desired" >/dev/null 2>&1; then
           ok "$mise_tool $resource_desired is installed"
         else
           fail "$mise_tool $resource_desired is missing"
@@ -160,8 +182,8 @@ fi
 
 if [ "$DOTFILES_ONLY" != 1 ] && command -v nvim >/dev/null 2>&1; then
   version="$(nvim --version | awk 'NR==1 {sub(/^NVIM v/, "", $2); print $2}')"
-  if nvim --headless --clean "+lua if vim.version.lt(vim.version(), {0, 12, 2}) then vim.cmd('cquit') end" +qa >/dev/null 2>&1; then
-    ok "Neovim $version satisfies the minimum"
+  if nvim --headless "+lua if vim.version.lt(vim.version(), {0, 12, 2}) then vim.cmd('cquit') end" +qa >/dev/null 2>&1; then
+    ok "Neovim $version and the managed configuration load"
   else
     fail "Neovim $version is older than 0.12.2"
   fi
@@ -258,7 +280,7 @@ if [ "$STATE_FOUND" = 1 ] && [ "$DOTFILES_ONLY" != 1 ]; then
       fi
     fi
   fi
-  if [ "$STATE_PLATFORM" = macos ] && [ "$STATE_PROFILE" = workstation ]; then
+  if [ "$STATE_PLATFORM" = macos ] && choices_app_selected workstation formula FelixKratz/formulae/borders; then
     if command -v borders >/dev/null 2>&1; then ok "macOS window borders are available"; else fail "macOS window borders are missing"; fi
   fi
   if [ "$STATE_CHANGE_SHELL" = 1 ]; then

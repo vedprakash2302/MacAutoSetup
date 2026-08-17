@@ -9,6 +9,15 @@ permissions:
   contents: read
 
 jobs:
+  secrets:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Reject secrets in history and the current tree
+        run: ./scripts/scan-secrets --all
+
   test:
     strategy:
       fail-fast: false
@@ -29,7 +38,7 @@ jobs:
             brew install shellcheck stow
           fi
       - run: ./tests/test.sh
-      - name: Validate Brewfile providers without installing applications
+      - name: Validate application manifest providers without installing applications
         if: runner.os == 'macOS'
         run: ./tests/brewfile-validation.sh
 

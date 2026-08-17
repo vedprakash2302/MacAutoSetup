@@ -5,6 +5,8 @@ set -Eeuo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck disable=SC1091
 . "$REPO_ROOT/lib/state.sh"
+# shellcheck disable=SC1091
+. "$REPO_ROOT/lib/config.sh"
 BACKUP_LIST="$VEDUP_STATE_DIR/backups.list"
 RESTORE=0
 case "$#:${1:-}" in
@@ -16,8 +18,9 @@ esac
 state_load "$VEDUP_STATE_FILE" || { printf 'No valid Vedup installation state was found.\n' >&2; exit 1; }
 
 read -r -a packages <<< "$STATE_STOW_PACKAGES"
+DOTFILES_ROOT="$(config_dotfiles_root)"
 for package in "${packages[@]}"; do
-  stow --no-folding --delete --target="$HOME" --dir="$REPO_ROOT/dotfiles" "$package" || true
+  stow --no-folding --delete --target="$HOME" --dir="$DOTFILES_ROOT" "$package" || true
 done
 
 if [ "$RESTORE" = 1 ] && [ -r "$BACKUP_LIST" ]; then

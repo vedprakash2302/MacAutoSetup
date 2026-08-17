@@ -20,8 +20,32 @@ jobs:
       - run: ./tests/test.sh
       - run: ./tests/brewfile-validation.sh
 
+  validate-amazon-linux:
+    runs-on: ubuntu-24.04
+    container: amazonlinux:2023
+    steps:
+      - name: Install checkout and test dependencies
+        run: dnf install -y git-core bash findutils gzip tar
+      - uses: actions/checkout@v4
+      - run: ./tests/amazon-linux.sh
+
+  canary-safe-sync-twice:
+    needs: [validate-macos, validate-amazon-linux]
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run terminal-profile synchronization twice
+        run: |
+          ./bin/setup --non-interactive --profile server --no-macos-defaults --no-shell-change
+          output="$(./bin/setup --non-interactive --profile server --no-macos-defaults --no-shell-change)"
+          grep -q 'already synchronized; no changes were made' <<< "$output"
+
   release:
-    needs: validate-macos
+    needs: [validate-macos, validate-amazon-linux, canary-safe-sync-twice]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -35,13 +59,26 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y shellcheck stow zsh
       - run: ./tests/test.sh
+      - name: Reject secrets in the release history and tree
+        run: ./scripts/scan-secrets --all
       - name: Build immutable release assets
         env:
           RELEASE_REF: ${{ github.ref_name }}
           RELEASE_COMMIT: ${{ github.sha }}
         run: |
           mkdir -p dist
-          git archive --format=tar --prefix="vedup-${RELEASE_REF}/" "$RELEASE_COMMIT" | gzip -n > "dist/vedup-${RELEASE_REF}.tar.gz"
+          stage="$(mktemp -d)"
+          mkdir -p "$stage/vedup-${RELEASE_REF}"
+          git archive --format=tar "$RELEASE_COMMIT" | tar -xf - -C "$stage/vedup-${RELEASE_REF}"
+          (
+            cd "$stage/vedup-${RELEASE_REF}"
+            find . -type f ! -name .vedup-manifest.sha256 -print0 |
+              LC_ALL=C sort -z |
+              xargs -0 sha256sum > .vedup-manifest.sha256
+          )
+          tar --sort=name --mtime='UTC 1970-01-01' --owner=0 --group=0 --numeric-owner \
+            -cf - -C "$stage" "vedup-${RELEASE_REF}" | gzip -n > "dist/vedup-${RELEASE_REF}.tar.gz"
+          rm -rf "$stage"
           ARCHIVE_SHA256="$(sha256sum "dist/vedup-${RELEASE_REF}.tar.gz" | awk '{print $1}')"
           sed \
             -e "s/__VEDUP_RELEASE_REF__/$RELEASE_REF/g" \

@@ -3,38 +3,62 @@
 set -Eeuo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+TEST_ROOT="$(mktemp -d)"
+trap 'rm -rf "$TEST_ROOT"' EXIT
 
 if [ "$(uname -s)" != Darwin ]; then
-  printf '[test] Brewfile provider validation is macOS-only; skipped\n'
+  printf '[test] macOS application provider validation is macOS-only; skipped\n'
   exit 0
 fi
 
-for brewfile in "$REPO_ROOT"/profiles/macos/Brewfile.*; do
-  HOMEBREW_NO_AUTO_UPDATE=1 brew bundle list --all --file "$brewfile" >/dev/null
+# shellcheck disable=SC1091
+. "$REPO_ROOT/lib/apps.sh"
+apps_manifest_validate
+while IFS=$'\t' read -r scope provider identifier label description; do
+  case "$scope" in ''|'#'*) continue ;; esac
+  case "$identifier" in
+    */*/*)
+      tap="${identifier%/*}"
+      token="${identifier##*/}"
+      repository="${tap#*/}"
+      tap_checkout="$TEST_ROOT/${tap//\//-}"
+      if [ ! -d "$tap_checkout/.git" ]; then
+        retry=0
+        until git clone --quiet --depth 1 "https://github.com/${tap%%/*}/homebrew-$repository.git" "$tap_checkout"; do
+          retry=$((retry + 1))
+          [ "$retry" -lt 3 ] || { printf 'Unavailable Homebrew tap for %s: %s\n' "$label" "$tap" >&2; exit 1; }
+          rm -rf "$tap_checkout"
+          sleep 2
+        done
+      fi
+      token_found=0
+      case "$provider" in
+        formula)
+          # Homebrew accepts both the current Formula/ layout and the legacy
+          # tap-root layout still used by established formula repositories.
+          for provider_dir in "$tap_checkout/Formula" "$tap_checkout/HomebrewFormula" "$tap_checkout"; do
+            [ ! -f "$provider_dir/$token.rb" ] || token_found=1
+          done
+          ;;
+        cask) [ ! -f "$tap_checkout/Casks/$token.rb" ] || token_found=1 ;;
+        *) printf 'Unsupported third-party provider: %s\n' "$provider" >&2; exit 1 ;;
+      esac
+      if [ "$token_found" -ne 1 ]; then
+        printf 'Tap exists but does not contain the declared %s token for %s: %s\n' "$provider" "$label" "$identifier" >&2
+        exit 1
+      fi
+      continue
+      ;;
+    */*)
+      printf 'Invalid Homebrew manifest identifier: %s\n' "$identifier" >&2
+      exit 1
+      ;;
+  esac
+  case "$provider" in
+    formula) HOMEBREW_NO_AUTO_UPDATE=1 brew info --formula "$identifier" >/dev/null ;;
+    cask) HOMEBREW_NO_AUTO_UPDATE=1 brew info --cask "$identifier" >/dev/null ;;
+    mas) [[ "$identifier" =~ ^[0-9]+$ ]] ;;
+  esac
+done < "$VEDUP_MACOS_APPS_MANIFEST"
 
-  while IFS= read -r tap; do
-    [ -n "$tap" ] || continue
-    repository="${tap#*/}"
-    retry=0
-    until git ls-remote --exit-code "https://github.com/${tap%%/*}/homebrew-$repository.git" HEAD >/dev/null 2>&1; do
-      retry=$((retry + 1))
-      [ "$retry" -lt 3 ] || { printf 'Unavailable Homebrew tap: %s\n' "$tap" >&2; exit 1; }
-      sleep 2
-    done
-  done < <(awk -F '"' '/^tap / { print $2 }' "$brewfile")
-
-  while IFS= read -r formula; do
-    [ -n "$formula" ] || continue
-    case "$formula" in */*) continue ;; esac
-    grep -F 'trusted:' "$brewfile" | grep -Fq "formula: \"$formula\"" && continue
-    HOMEBREW_NO_AUTO_UPDATE=1 brew info --formula "$formula" >/dev/null
-  done < <(awk -F '"' '/^brew / { print $2 }' "$brewfile")
-
-  while IFS= read -r cask; do
-    [ -n "$cask" ] || continue
-    case "$cask" in */*) continue ;; esac
-    HOMEBREW_NO_AUTO_UPDATE=1 brew info --cask "$cask" >/dev/null
-  done < <(awk -F '"' '/^cask / { print $2 }' "$brewfile")
-done
-
-printf '[test] Brewfile syntax, official tokens, and third-party taps are available\n'
+printf '[test] macOS application manifest and official Homebrew tokens are available\n'
