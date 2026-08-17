@@ -97,4 +97,16 @@ jobs:
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "${{ github.ref_name }}" dist/bootstrap "dist/vedup-${{ github.ref_name }}.tar.gz" dist/checksums.txt --generate-notes --verify-tag
+        run: |
+          tag="${{ github.ref_name }}"
+          assets=(dist/bootstrap "dist/vedup-${tag}.tar.gz" dist/checksums.txt)
+          for attempt in 1 2 3 4 5; do
+            if gh release view "$tag" >/dev/null 2>&1; then
+              gh release upload "$tag" "${assets[@]}" --clobber && exit 0
+            elif gh release create "$tag" "${assets[@]}" --generate-notes --verify-tag; then
+              exit 0
+            fi
+            [ "$attempt" -eq 5 ] || sleep "$((attempt * 5))"
+          done
+          printf 'GitHub release publication failed after bounded retries.\n' >&2
+          exit 1
