@@ -45,11 +45,22 @@ config_copy_entry() {
 }
 
 config_copy_legacy_link_contents() {
-  local source="$1" destination="$2" resolved
+  local source="$1" destination="$2" link_value source_dir resolved_dir resolved
+  local legacy_root legacy_dotfiles
   [ -L "$source" ] || return 1
-  resolved="$(cd -P "$(dirname "$source")" && cd -P "$(dirname "$(readlink "$source")")" 2>/dev/null && printf '%s/%s' "$PWD" "$(basename "$(readlink "$source")")")" || return 1
+  legacy_root="${VEDUP_LEGACY_ROOT:-${XDG_DATA_HOME:-$HOME/.local/share}/macautosetup/repo}"
+  [ -d "$legacy_root/dotfiles" ] || return 1
+  legacy_dotfiles="$(cd -P "$legacy_root/dotfiles" && pwd)" || return 1
+  source_dir="$(cd -P "$(dirname "$source")" && pwd)" || return 1
+  link_value="$(readlink "$source")" || return 1
+  case "$link_value" in
+    /*) ;;
+    *) link_value="$source_dir/$link_value" ;;
+  esac
+  resolved_dir="$(cd -P "$(dirname "$link_value")" 2>/dev/null && pwd)" || return 1
+  resolved="$resolved_dir/$(basename "$link_value")"
   case "$resolved" in
-    "${VEDUP_LEGACY_ROOT:-${XDG_DATA_HOME:-$HOME/.local/share}/macautosetup/repo}"/dotfiles/*|*/MacAutoSetup/dotfiles/*) ;;
+    "$legacy_dotfiles"/*) ;;
     *) return 1 ;;
   esac
   [ -f "$resolved" ] || return 1
