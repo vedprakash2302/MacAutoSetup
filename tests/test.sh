@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC2317
+# Test helpers are passed by name to the parallel runner, so ShellCheck cannot
+# see their indirect invocation.
+# shellcheck disable=SC2317,SC2329
 
 set -euo pipefail
 
