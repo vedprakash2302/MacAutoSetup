@@ -31,12 +31,19 @@ while IFS=$'\t' read -r scope provider identifier label description; do
           sleep 2
         done
       fi
+      token_found=0
       case "$provider" in
-        formula) provider_path='/(Formula|HomebrewFormula)/' ;;
-        cask) provider_path='/Casks/' ;;
+        formula)
+          # Homebrew accepts both the current Formula/ layout and the legacy
+          # tap-root layout still used by established formula repositories.
+          for provider_dir in "$tap_checkout/Formula" "$tap_checkout/HomebrewFormula" "$tap_checkout"; do
+            [ ! -f "$provider_dir/$token.rb" ] || token_found=1
+          done
+          ;;
+        cask) [ ! -f "$tap_checkout/Casks/$token.rb" ] || token_found=1 ;;
         *) printf 'Unsupported third-party provider: %s\n' "$provider" >&2; exit 1 ;;
       esac
-      if ! find "$tap_checkout" -maxdepth 3 -type f -name "$token.rb" -print | grep -Eq "$provider_path"; then
+      if [ "$token_found" -ne 1 ]; then
         printf 'Tap exists but does not contain the declared %s token for %s: %s\n' "$provider" "$label" "$identifier" >&2
         exit 1
       fi
