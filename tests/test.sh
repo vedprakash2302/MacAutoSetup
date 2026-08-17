@@ -668,11 +668,12 @@ EOF
     fail "vedup update accepted invalid release metadata"
   fi
   [[ "$output" == *"invalid release tag"* ]] || fail "vedup update rejection was not actionable"
-  "$REPO_ROOT/bin/vedup" help | grep -Fq 'update       Download, verify' || fail "vedup update is absent from command help"
+  output="$("$REPO_ROOT/bin/vedup" help)"
+  [[ "$output" == *'update       Download, verify'* ]] || fail "vedup update is absent from command help"
   mkdir -p "$legacy_launcher_home/.local/bin"
   ln -s "$REPO_ROOT/bin/vedup" "$legacy_launcher_home/.local/bin/vedup"
-  HOME="$legacy_launcher_home" "$legacy_launcher_home/.local/bin/vedup" help | \
-    grep -Fq 'Usage: vedup' || fail "legacy symlink launcher derived the wrong repository root"
+  output="$(HOME="$legacy_launcher_home" "$legacy_launcher_home/.local/bin/vedup" help)"
+  [[ "$output" == *'Usage: vedup'* ]] || fail "legacy symlink launcher derived the wrong repository root"
   pass "self-update-only verification and atomic activation"
 }
 
@@ -1082,8 +1083,10 @@ config_workspace_and_capture() {
   mkdir -p "$capture_source"
   (cd "$REPO_ROOT" && tar --exclude=.git -cf - .) | (cd "$capture_source" && tar -xf -)
   git -C "$capture_source" init -b main --quiet
+  git -C "$capture_source" config user.name Vedup
+  git -C "$capture_source" config user.email vedup@example.invalid
   git -C "$capture_source" add -A
-  git -C "$capture_source" -c user.name=Vedup -c user.email=vedup@example.invalid commit --quiet -m baseline
+  git -C "$capture_source" commit --quiet -m baseline
   git clone --bare --quiet "$capture_source" "$capture_remote"
   git -C "$capture_source" remote add origin "$capture_remote"
   git -C "$capture_source" push --quiet -u origin main

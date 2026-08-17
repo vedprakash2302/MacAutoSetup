@@ -70,23 +70,24 @@ apps_each_provider() {
 }
 
 apps_manifest_has() {
-  local wanted_provider="$1" wanted_identifier="$2" scope provider identifier label description
+  local wanted_provider="$1" wanted_identifier="$2" scope provider identifier label description found=0
   while IFS=$'\t' read -r scope provider identifier label description; do
-    [ "$provider" = "$wanted_provider" ] && [ "$identifier" = "$wanted_identifier" ] && return 0
+    [ "$provider" = "$wanted_provider" ] && [ "$identifier" = "$wanted_identifier" ] && found=1
   done < <(apps_each_scope workstation; apps_each_scope optional)
-  return 1
+  [ "$found" -eq 1 ]
 }
 
 apps_manifest_installs() {
-  local wanted_provider="$1" wanted_identifier="$2" scope provider identifier label description
+  local wanted_provider="$1" wanted_identifier="$2" scope provider identifier label description found=0
   while IFS=$'\t' read -r scope provider identifier label description; do
-    [ "$provider" = "$wanted_provider" ] && [ "${identifier##*/}" = "${wanted_identifier##*/}" ] && return 0
+    [ "$provider" = "$wanted_provider" ] && \
+      [ "${identifier##*/}" = "${wanted_identifier##*/}" ] && found=1
   done < <(apps_each_scope workstation; apps_each_scope optional)
-  return 1
+  [ "$found" -eq 1 ]
 }
 
 apps_scope_has_planned_action() {
-  local wanted="$1" scope provider identifier label description resource
+  local wanted="$1" scope provider identifier label description resource found=0
   while IFS=$'\t' read -r scope provider identifier label description; do
     [ "$scope" = "$wanted" ] || continue
     case "$provider" in
@@ -95,7 +96,7 @@ apps_scope_has_planned_action() {
       mas) resource="mas:$identifier" ;;
       *) continue ;;
     esac
-    plan_has_action_for_resource "$resource" && return 0
+    plan_has_action_for_resource "$resource" && found=1
   done < <(apps_each_selected)
-  return 1
+  [ "$found" -eq 1 ]
 }
