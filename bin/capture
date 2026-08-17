@@ -261,7 +261,7 @@ git -C "$AUTHOR_REPO" worktree add -b "$branch" "$CAPTURE_WORKTREE" origin/main
 SOURCE_DIR="$CAPTURE_WORKTREE"
 
 capture_update_preference() {
-  local spec="$1" new_value="$2" relative domain key value_type target temporary shell_value
+  local spec="$1" new_value="$2" relative domain key value_type target temporary shell_value mode
   IFS='|' read -r relative domain key value_type <<< "$spec"
   target="$SOURCE_DIR/$relative" temporary="$CAPTURE_TMP/preference.$$"
   printf -v shell_value '%q' "$new_value"
@@ -272,6 +272,11 @@ capture_update_preference() {
     { print }
     END { if (!changed) exit 42 }
   ' "$target" > "$temporary" || die "Could not update tracked preference $domain $key"
+  if ! mode="$(stat -f '%Lp' "$target" 2>/dev/null)"; then
+    mode="$(stat -c '%a' "$target")" || die "Could not read permissions for $relative"
+  fi
+  [[ "$mode" =~ ^[0-7]{3,4}$ ]] || die "Could not validate permissions for $relative"
+  chmod "$mode" "$temporary"
   mv "$temporary" "$target"
 }
 

@@ -1086,6 +1086,8 @@ config_workspace_and_capture() {
   git -C "$capture_source" config user.name Vedup
   git -C "$capture_source" config user.email vedup@example.invalid
   git -C "$capture_source" add -A
+  [ "$(git -C "$capture_source" ls-files --stage dotfiles/macos/settings/core.sh | awk '{ print $1 }')" = 100755 ] || \
+    fail "capture fixture did not retain executable macOS settings"
   git -C "$capture_source" commit --quiet -m baseline
   git clone --bare --quiet "$capture_source" "$capture_remote"
   git -C "$capture_source" remote add origin "$capture_remote"
@@ -1103,6 +1105,8 @@ EOF
     ! git -C "$capture_source" show "$capture_branch:dotfiles/zsh/.zshrc" | grep -Fq '# captured-local-change'; then
     fail "capture did not commit selected configuration into the author checkout"
   fi
+  [ "$(git -C "$capture_source" ls-tree "$capture_branch" dotfiles/macos/settings/core.sh | awk '{ print $1 }')" = 100755 ] || \
+    fail "capture removed executable permissions from macOS settings"
   pass "writable configuration workspace, conflict preservation, status, and secret-safe capture"
 }
 
