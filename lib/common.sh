@@ -23,6 +23,36 @@ die() {
 }
 has() { command -v "$1" >/dev/null 2>&1; }
 
+mise_binary() {
+  if [ -x "$HOME/.local/bin/mise" ]; then
+    printf '%s\n' "$HOME/.local/bin/mise"
+  else
+    command -v mise
+  fi
+}
+
+# Execute a managed tool against one explicit immutable Vedup configuration.
+# This prevents an older system binary or an unrelated project config from
+# being selected while Vedup is planning, configuring, or verifying a machine.
+mise_exec_config() {
+  local config="$1" mise_bin
+  shift
+  [ -r "$config" ] || { warn "Mise configuration is unavailable: $config"; return 1; }
+  mise_bin="$(mise_binary)" || { warn "Mise is unavailable."; return 1; }
+  env MISE_CONFIG_FILE="$config" \
+    MISE_EXEC_AUTO_INSTALL=false \
+    MISE_NOT_FOUND_AUTO_INSTALL=false \
+    MISE_NOT_FOUND_SYSTEM_FALLBACK=false \
+    "$mise_bin" exec -- "$@"
+}
+
+mise_trust_config() {
+  local config="$1" mise_bin
+  [ -r "$config" ] || { warn "Mise configuration is unavailable: $config"; return 1; }
+  mise_bin="$(mise_binary)" || { warn "Mise is unavailable."; return 1; }
+  "$mise_bin" trust "$config"
+}
+
 vedup_launcher_is_managed() {
   local target="$1" link
   if [ -L "$target" ]; then

@@ -307,7 +307,9 @@ plan_mise_tool_present() {
   if inventory_fixture_has mise-tool "$tool@$version"; then return 0; else fixture_status="$?"; fi
   [ "$fixture_status" != 1 ] || return 1
   inventory_command_exists mise || return 1
-  MISE_CONFIG_FILE="$REPO_ROOT/mise.toml" mise where "$tool@$version" >/dev/null 2>&1
+  local mise_bin
+  mise_bin="$(mise_binary)" || return 1
+  MISE_CONFIG_FILE="$REPO_ROOT/mise.toml" "$mise_bin" where "$tool@$version" >/dev/null 2>&1
 }
 
 plan_mise_tools() {

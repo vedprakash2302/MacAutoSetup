@@ -728,6 +728,75 @@ EOF
   pass "missing-only provider policy and Git credential invariants"
 }
 
+mise_execution_boundary() {
+  local boundary_root="$TEST_ROOT/mise-boundary" boundary_home="$TEST_ROOT/mise-boundary/home"
+  local fake_bin="$TEST_ROOT/mise-boundary/bin" exec_log="$TEST_ROOT/mise-boundary/exec.log"
+  local external_marker="$TEST_ROOT/mise-boundary/external-nvim" headless_log="$TEST_ROOT/mise-boundary/headless.log"
+  mkdir -p "$boundary_home/.local/bin" "$fake_bin"
+  cat > "$fake_bin/nvim" <<'EOF'
+#!/usr/bin/env bash
+: > "$VEDUP_EXTERNAL_NVIM_MARKER"
+printf 'NVIM v0.9.0\n'
+EOF
+  chmod +x "$fake_bin/nvim"
+  cat > "$boundary_home/.local/bin/mise" <<'EOF'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+printf '%s|%s\n' "${MISE_CONFIG_FILE:-}" "$*" >> "$VEDUP_MISE_EXEC_LOG"
+case "${1:-}" in
+  trust) exit 0 ;;
+  exec)
+    [ "${MISE_EXEC_AUTO_INSTALL:-}" = false ] || exit 84
+    [ "${MISE_NOT_FOUND_AUTO_INSTALL:-}" = false ] || exit 85
+    [ "${MISE_NOT_FOUND_SYSTEM_FALLBACK:-}" = false ] || exit 86
+    shift
+    [ "${1:-}" = -- ] && shift
+    [ "${1:-}" = nvim ] || exit 81
+    shift
+    if [ "${1:-}" = --version ]; then
+      printf 'NVIM v%s\n' "$VEDUP_FAKE_NVIM_VERSION"
+      exit 0
+    fi
+    if IFS= read -r unexpected; then
+      printf 'unexpected stdin: %s\n' "$unexpected" >&2
+      exit 82
+    fi
+    printf '%s\n' "$*" > "$VEDUP_NVIM_HEADLESS_LOG"
+    ;;
+  *) exit 83 ;;
+esac
+EOF
+  chmod +x "$boundary_home/.local/bin/mise"
+
+  boundary_root="$REPO_ROOT"
+  printf 'interactive input must not reach Neovim\n' | \
+    HOME="$boundary_home" PATH="$fake_bin:/usr/bin:/bin" \
+    VEDUP_MISE_EXEC_LOG="$exec_log" VEDUP_EXTERNAL_NVIM_MARKER="$external_marker" \
+    VEDUP_NVIM_HEADLESS_LOG="$headless_log" VEDUP_FAKE_NVIM_VERSION=0.12.2 \
+    bash -c 'root="$1"; set --; source "$root/bin/setup"; DRY_RUN=0; install_neovim_plugins' \
+      _ "$boundary_root" || fail "pinned Neovim integration did not complete"
+  [ ! -e "$external_marker" ] || fail "an older external Neovim shadowed the pinned Mise tool"
+  grep -Fq "$REPO_ROOT/mise.toml|exec -- nvim --version" "$exec_log" || \
+    fail "Neovim version verification did not use the release Mise configuration"
+  grep -Fq -- '--headless +Lazy! restore +qa' "$headless_log" || \
+    fail "LazyVim synchronization did not use pinned headless Neovim"
+
+  : > "$exec_log"
+  if HOME="$boundary_home" PATH="$fake_bin:/usr/bin:/bin" \
+      VEDUP_MISE_EXEC_LOG="$exec_log" VEDUP_EXTERNAL_NVIM_MARKER="$external_marker" \
+      VEDUP_NVIM_HEADLESS_LOG="$headless_log" VEDUP_FAKE_NVIM_VERSION=0.10.0 \
+      bash -c 'root="$1"; set --; source "$root/bin/setup"; DRY_RUN=0; install_neovim_plugins' \
+        _ "$boundary_root" >/dev/null 2>&1; then
+    fail "Vedup loaded LazyVim with an unexpected Neovim version"
+  fi
+  ! grep -Fq 'exec -- nvim --headless' "$exec_log" || \
+    fail "Vedup started LazyVim before rejecting the wrong Neovim version"
+  # shellcheck disable=SC2016
+  grep -Fq 'mise_exec_config "$MISE_CONFIG_FILE" nvim --headless' "$REPO_ROOT/bin/doctor" || \
+    fail "doctor still verifies an ambient Neovim binary"
+  pass "explicit pinned Mise execution and non-interactive Neovim synchronization"
+}
+
 state_and_resume() {
   local state_home="$TEST_ROOT/state" malicious_marker="$TEST_ROOT/state-code-executed"
   local overlay_home overlay_output interrupted_home commit_home mise_home mise_inventory mise_output migration_home migration_root rollback_guard_home
@@ -1123,6 +1192,7 @@ run_test macos-preference-rollback macos_preference_rollback
 run_test release-asset release_asset
 run_test self-update vedup_self_update
 run_test safe-sync-invariants safe_sync_invariants
+run_test mise-execution-boundary mise_execution_boundary
 run_test state-and-resume state_and_resume
 run_test release-failure-safety release_failure_safety
 run_test dotfile-failure-rollback dotfile_failure_rollback
