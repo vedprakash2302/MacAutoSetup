@@ -245,7 +245,7 @@ install_mise() {
 }
 
 install_mise_tools() {
-  local spec command_name resource
+  local spec command_name resource mise_bin
   local -a candidates tools
   candidates=(node\|node python\|python aqua:neovim/neovim\|nvim starship\|starship zoxide\|zoxide ripgrep\|rg bat\|bat fzf\|fzf carapace\|carapace jq\|jq yq\|yq lazygit\|lazygit gh\|gh tree-sitter\|tree-sitter)
   if [ "$OS/$ARCH" != linux/arm64 ]; then candidates+=(tlrc\|tldr); fi
@@ -270,8 +270,10 @@ install_mise_tools() {
     quote_command "${tools[@]}"
     return 0
   fi
-  mise trust "$REPO_ROOT/mise.toml"
-  retry_command 3 2 env MISE_CONFIG_FILE="$REPO_ROOT/mise.toml" mise install --locked "${tools[@]}"
+  mise_bin="$(mise_binary)" || die "Mise is unavailable after installation."
+  mise_trust_config "$REPO_ROOT/mise.toml"
+  retry_command 3 2 env MISE_CONFIG_FILE="$REPO_ROOT/mise.toml" \
+    "$mise_bin" install --locked "${tools[@]}"
 }
 
 install_eza_linux() {
@@ -542,12 +544,22 @@ warm_zsh_startup_cache() {
 }
 
 install_neovim_plugins() {
-  inventory_command_exists nvim || return 0
+  local expected_version actual_version
+  expected_version="$(plan_mise_version aqua:neovim/neovim)"
+  [ -n "$expected_version" ] || die "The release does not declare a Neovim version."
   if [ "$DRY_RUN" = 1 ]; then
-    printf '[dry-run] nvim --headless +Lazy! restore +qa\n'
+    printf '[dry-run] MISE_CONFIG_FILE=%q mise exec -- nvim --headless +Lazy!\ restore +qa </dev/null\n' \
+      "$REPO_ROOT/mise.toml"
     return 0
   fi
-  retry_command 3 2 nvim --headless '+Lazy! restore' +qa
+  mise_trust_config "$REPO_ROOT/mise.toml" || die "Could not trust the release Mise configuration."
+  actual_version="$(mise_exec_config "$REPO_ROOT/mise.toml" nvim --version 2>/dev/null | \
+    awk 'NR == 1 { version=$2; sub(/^v/, "", version); print version; exit }')"
+  [ "$actual_version" = "$expected_version" ] || \
+    die "Pinned Neovim $expected_version could not be selected (resolved ${actual_version:-unknown})."
+  retry_command 3 2 mise_exec_config "$REPO_ROOT/mise.toml" \
+    nvim --headless '+Lazy! restore' +qa </dev/null || \
+    die "Neovim plugin synchronization failed with pinned Neovim $expected_version."
 }
 
 change_login_shell() {
@@ -795,6 +807,7 @@ main() {
   . "$REPO_ROOT/lib/platforms/$PLATFORM_ADAPTER.sh"
 
   export PATH="$HOME/.local/share/mise/shims:$HOME/.local/bin:$PATH"
+  export MISE_CONFIG_FILE="$REPO_ROOT/mise.toml"
   STOW_PACKAGES=(zsh nvim starship tmux scripts)
   if [ "$OS" = macos ]; then
     choices_app_selected workstation cask nikitabobko/tap/aerospace && STOW_PACKAGES+=(aerospace)

@@ -7,6 +7,8 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck disable=SC1091
 . "$REPO_ROOT/versions.env"
 # shellcheck disable=SC1091
+. "$REPO_ROOT/lib/common.sh"
+# shellcheck disable=SC1091
 . "$REPO_ROOT/lib/state.sh"
 # shellcheck disable=SC1091
 . "$REPO_ROOT/lib/choices.sh"
@@ -14,6 +16,8 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 . "$REPO_ROOT/lib/apps.sh"
 # shellcheck disable=SC1091
 . "$REPO_ROOT/lib/config.sh"
+# shellcheck disable=SC1091
+. "$REPO_ROOT/lib/plan.sh"
 export PATH="$HOME/.local/share/mise/shims:$HOME/.local/bin:$PATH"
 export MISE_CONFIG_FILE="${VEDUP_APPLIED_RELEASE:-$REPO_ROOT}/mise.toml"
 failures=0
@@ -82,7 +86,7 @@ if [ "${STATE_PLATFORM:-}" = macos ]; then
   note "Vedup does not inspect or change .gitconfig, credential helpers, or Keychain"
 fi
 
-if [ "$DOTFILES_ONLY" = 1 ]; then core_commands=(stow zsh); else core_commands=(git zsh stow mise node python nvim); fi
+if [ "$DOTFILES_ONLY" = 1 ]; then core_commands=(stow zsh); else core_commands=(git zsh stow mise); fi
 full_commands=(tmux starship zoxide rg fd bat fzf eza carapace jq yq delta lazygit btop gh tree-sitter tldr)
 for command_name in "${core_commands[@]}"; do
   if command -v "$command_name" >/dev/null 2>&1; then ok "$command_name is available"
@@ -180,12 +184,17 @@ if [ "$QUICK" != 1 ] && [ "$STATE_FOUND" = 1 ]; then
   fi
 fi
 
-if [ "$DOTFILES_ONLY" != 1 ] && command -v nvim >/dev/null 2>&1; then
-  version="$(nvim --version | awk 'NR==1 {sub(/^NVIM v/, "", $2); print $2}')"
-  if nvim --headless "+lua if vim.version.lt(vim.version(), {0, 12, 2}) then vim.cmd('cquit') end" +qa >/dev/null 2>&1; then
+if [ "$DOTFILES_ONLY" != 1 ] && command -v mise >/dev/null 2>&1; then
+  expected_version="$(plan_mise_version aqua:neovim/neovim)"
+  version="$(mise_exec_config "$MISE_CONFIG_FILE" nvim --version 2>/dev/null | \
+    awk 'NR == 1 { version=$2; sub(/^v/, "", version); print version; exit }')"
+  if [ -n "$expected_version" ] && [ "$version" = "$expected_version" ] && \
+      mise_exec_config "$MISE_CONFIG_FILE" nvim --headless \
+      "+lua if vim.version.lt(vim.version(), {0, 11, 2}) then vim.cmd('cquit') end" \
+      +qa </dev/null >/dev/null 2>&1; then
     ok "Neovim $version and the managed configuration load"
   else
-    fail "Neovim $version is older than 0.12.2"
+    fail "Pinned Neovim ${expected_version:-unknown} could not be selected and loaded (resolved ${version:-unknown})"
   fi
 fi
 
