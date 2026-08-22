@@ -768,6 +768,28 @@ esac
 EOF
   chmod +x "$boundary_home/.local/bin/mise"
 
+  # A development stage can legitimately contain plugin or platform work but
+  # no missing Mise tools. Empty subtasks must be no-ops under `set -u` so an
+  # interrupted or partially configured machine can safely resume.
+  mkdir -p \
+    "$boundary_home/.local/share/vedup/zsh/plugins/zsh-autosuggestions" \
+    "$boundary_home/.local/share/vedup/zsh/plugins/zsh-syntax-highlighting" \
+    "$boundary_home/.local/share/vedup/zsh/plugins/zsh-history-substring-search" \
+    "$boundary_home/.local/share/vedup/zsh/plugins/zsh-completions" \
+    "$boundary_home/.local/share/vedup/zsh/plugins/zsh-you-should-use" \
+    "$boundary_home/.local/share/vedup/zsh/plugins/git-alias" \
+    "$boundary_home/.tmux/plugins/tpm" \
+    "$boundary_home/.tmux/plugins/vim-tmux-navigator" \
+    "$boundary_home/.tmux/plugins/tmux-resurrect" \
+    "$boundary_home/.tmux/plugins/tmux-continuum" \
+    "$boundary_home/.tmux/plugins/tmux-sensible" \
+    "$boundary_home/.tmux/plugins/tmux-online-status" \
+    "$boundary_home/.tmux/plugins/tmux-battery" \
+    "$boundary_home/.tmux/plugins/tmux"
+  HOME="$boundary_home" PATH="$fake_bin:/usr/bin:/bin" \
+    bash -c 'root="$1"; set --; source "$root/bin/setup"; OS=linux; ARCH=x64; WITH_AWS=0; WITH_DOCKER=0; DRY_RUN=0; plan_reset; install_mise_tools; install_terminal_plugins' \
+      _ "$REPO_ROOT" || fail "empty development subtasks were not safe no-ops"
+
   boundary_root="$REPO_ROOT"
   printf 'interactive input must not reach Neovim\n' | \
     HOME="$boundary_home" PATH="$fake_bin:/usr/bin:/bin" \

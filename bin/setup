@@ -246,7 +246,7 @@ install_mise() {
 
 install_mise_tools() {
   local spec command_name resource mise_bin
-  local -a candidates tools
+  local -a candidates=() tools=()
   candidates=(node\|node python\|python aqua:neovim/neovim\|nvim starship\|starship zoxide\|zoxide ripgrep\|rg bat\|bat fzf\|fzf carapace\|carapace jq\|jq yq\|yq lazygit\|lazygit gh\|gh tree-sitter\|tree-sitter)
   if [ "$OS/$ARCH" != linux/arm64 ]; then candidates+=(tlrc\|tldr); fi
   if [ "$OS" = linux ]; then
@@ -401,7 +401,7 @@ plugins_commit() {
 sync_plugin_checkouts() {
   local max_jobs="$1" spec repository_and_commit repository commit destination
   local start=0 batch_count index failed pid
-  local -a specs pids names
+  local -a specs=() pids=() names=()
   shift
   specs=("$@")
 
@@ -471,7 +471,7 @@ install_tlrc_linux_arm64() {
 
 install_terminal_plugins() {
   local zsh_root tmux_root plugin_jobs spec repository_and_commit destination plugin_name
-  local -a candidates selected
+  local -a candidates=() selected=()
   zsh_root="${XDG_DATA_HOME:-$HOME/.local/share}/vedup/zsh/plugins"
   tmux_root="$HOME/.tmux/plugins"
   plugin_jobs="${PLUGIN_SYNC_JOBS:-$PARALLEL_JOBS}"
@@ -511,7 +511,7 @@ install_platform_cli_artifacts() {
 
 install_development_components() {
   local plugin_jobs
-  local -a tasks
+  local -a tasks=()
   tasks=(
     "Pinned development tools|install_mise_tools"
     "Platform CLI artifacts|install_platform_cli_artifacts"
