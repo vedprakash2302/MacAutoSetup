@@ -271,7 +271,7 @@ retry_command() {
 # wait -n so the implementation also works with the Bash 3.2 shipped by macOS.
 run_parallel_tasks() {
   local max_jobs="$1" entry label task start=0 batch_count index pid failed task_status
-  local -a entries pids labels
+  local -a entries=() pids=() labels=()
   shift
   entries=("$@")
 

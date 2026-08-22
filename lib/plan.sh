@@ -180,7 +180,7 @@ plan_previous_vedup_command() { vedup_launcher_is_managed "$1"; }
 
 plan_dotfile_parent_status() {
   local relative="$1" current="$HOME" part prefix="" status=clean
-  local -a parts
+  local -a parts=()
   IFS='/' read -r -a parts <<< "$(dirname "$relative")"
   for part in "${parts[@]}"; do
     [ "$part" = . ] && continue
@@ -374,7 +374,7 @@ plan_mise_tools() {
 plan_generate() {
   local package formula cask current_login_shell app_scope app_provider app_identifier app_label app_description
   local selected_mas_apps=0 selected_mas_formula=0
-  local -a macos_check_args
+  local -a macos_check_args=()
   plan_reset
   state_detect_workflow
   PLAN_WORKFLOW="$STATE_WORKFLOW"
