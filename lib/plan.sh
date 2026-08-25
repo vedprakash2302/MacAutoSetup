@@ -171,7 +171,7 @@ plan_previous_vedup_link() {
   [ -L "$target" ] || return 1
   link="$(readlink "$target")"
   case "$link" in
-    *MacAutoSetup/dotfiles/*|*macautosetup/repo/dotfiles/*|*/vedup/releases/*/dotfiles/*|*/vedup/current/dotfiles/*|*/vedup/config/worktree/*) return 0 ;;
+    */vedup/releases/*/dotfiles/*|*/vedup/current/dotfiles/*|*/vedup/config/worktree/*) return 0 ;;
     *) return 1 ;;
   esac
 }
@@ -480,7 +480,7 @@ plan_generate() {
   elif [ ! -e "$HOME/.local/bin/vedup" ] && [ ! -L "$HOME/.local/bin/vedup" ]; then
     plan_add configure vedup-command launcher vedup-managed missing current "Install the stable Vedup command launcher"
   elif plan_previous_vedup_command "$HOME/.local/bin/vedup"; then
-    plan_add configure vedup-command launcher vedup-managed previous current "Replace the legacy Vedup dispatcher with the stable launcher"
+    plan_add configure vedup-command launcher vedup-managed previous current "Replace an older Vedup dispatcher with the stable launcher"
   else
     plan_add review vedup-command launcher unmanaged-conflict present current \
       "Preserve the existing ~/.local/bin/vedup path; move it aside before Vedup manages this command"

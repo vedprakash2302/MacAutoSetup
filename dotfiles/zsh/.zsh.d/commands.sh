@@ -1,16 +1,17 @@
-# History setup
+# Durable, shared history without repeated or whitespace-only entries.
 setopt share_history
 setopt hist_expire_dups_first
-setopt hist_reduce_blanks   # remove superfluous blanks from history items
-setopt inc_append_history   # save history entries as soon as they are entered
-setopt hist_ignore_all_dups # ignore duplicate entries
-setopt hist_save_no_dups    # do not save duplicate entries
-setopt hist_ignore_space    # ignore commands that start with a space
-setopt auto_list            # automatically list choices on ambiguous completion
-setopt auto_menu            # automatically use menu completion
-setopt always_to_end        # move cursor to end if word had one match
+setopt hist_reduce_blanks
+setopt inc_append_history
+setopt hist_ignore_all_dups
+setopt hist_save_no_dups
+setopt hist_ignore_space
 
-# Use vi editing while retaining explicit completion bindings in insert mode.
+# Predictable completion menus in both Emacs and vi insert keymaps.
+setopt auto_list
+setopt auto_menu
+setopt always_to_end
+
 bindkey -v
 bindkey -M emacs '^I' expand-or-complete-prefix
 bindkey -M viins '^I' expand-or-complete-prefix

@@ -12,8 +12,7 @@ and resumed.
 Verified releases live under `~/.local/share/vedup/releases/`. The `current`
 link selects the CLI and may advance during `vedup update`; `applied` selects
 the machine policy and advances with committed state only after configuration
-and health checks pass. Both pointers roll back together if sync fails. A
-legacy `~/.local/share/macautosetup/repo` checkout is retained as recovery data.
+and health checks pass. Both pointers roll back together if sync fails.
 
 Managed configuration uses a writable three-way workspace:
 
@@ -36,5 +35,5 @@ the machine permits it; otherwise sudo displays one normal password prompt.
 Vedup never reads, stores, invents, or changes that password or sudo policy.
 
 Package managers cannot reliably roll back installations. Their changes are
-therefore additive, missing-only, and resumable. Rerunning the one-liner is the
-supported recovery action.
+therefore additive, missing-only, and resumable. Run `vedup sync` to resume an
+interrupted setup; use the one-liner to recover the CLI itself.

@@ -25,7 +25,7 @@ done
 export MACOS_DRY_RUN
 export MACOS_CHECK_ONLY
 
-if [ "${MACAUTOSETUP_TEST_OS:-}" != macos ] && [ "$(uname -s)" != Darwin ]; then
+if [ "${VEDUP_TEST_OS:-}" != macos ] && [ "$(uname -s)" != Darwin ]; then
   printf 'macOS settings can only be applied on macOS.\n' >&2
   exit 1
 fi

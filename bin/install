@@ -29,7 +29,7 @@ UI_TEMP_DIR=""
 UI_RESULT=""
 UI_WIDTH=72
 TEST_CHOICE_INDEX=0
-IFS='|' read -r -a TEST_CHOICES <<< "${MACAUTOSETUP_TEST_CHOICES:-}"
+IFS='|' read -r -a TEST_CHOICES <<< "${VEDUP_TEST_CHOICES:-}"
 
 usage() {
   cat <<'EOF'
@@ -74,18 +74,18 @@ cleanup_ui() {
     case "$UI_TEMP_DIR" in "${TMPDIR:-/tmp}"/vedup-gum.*) rm -rf -- "$UI_TEMP_DIR" ;; esac
   fi
   type plan_cleanup >/dev/null 2>&1 && plan_cleanup
-  type state_cleanup >/dev/null 2>&1 && state_cleanup
 }
 trap cleanup_ui EXIT
 
 normalize_platform() {
   local machine columns distro_name
-  case "${MACAUTOSETUP_TEST_OS:-$(uname -s)}" in
+  IS_WSL=0
+  case "${VEDUP_TEST_OS:-$(uname -s)}" in
     macos|Darwin) OS=macos ;;
     linux|Linux) OS=linux ;;
     *) die "Unsupported operating system: $(uname -s)" ;;
   esac
-  machine="${MACAUTOSETUP_TEST_ARCH:-$(uname -m)}"
+  machine="${VEDUP_TEST_ARCH:-$(uname -m)}"
   case "$machine" in x64|x86_64|amd64) ARCH=x64 ;; arm64|aarch64) ARCH=arm64 ;; *) die "Unsupported architecture: $machine" ;; esac
   if [ "$OS" = macos ]; then
     DISTRO=macos
@@ -93,10 +93,14 @@ normalize_platform() {
     PLATFORM_ADAPTER=macos
     PLATFORM_NAME="macOS $DISTRO_VERSION / $ARCH"
   else
-    if [ -n "${MACAUTOSETUP_TEST_DISTRO:-}" ]; then
-      DISTRO="$MACAUTOSETUP_TEST_DISTRO"
-      DISTRO_VERSION="${MACAUTOSETUP_TEST_DISTRO_VERSION:-test}"
-      distro_name="$DISTRO $DISTRO_VERSION"
+    if [ -n "${VEDUP_TEST_DISTRO:-}" ]; then
+      DISTRO="$VEDUP_TEST_DISTRO"
+      DISTRO_VERSION="${VEDUP_TEST_DISTRO_VERSION:-test}"
+      case "$DISTRO" in
+        ubuntu) distro_name="Ubuntu $DISTRO_VERSION" ;;
+        amzn) distro_name="Amazon Linux $DISTRO_VERSION" ;;
+        *) distro_name="$DISTRO $DISTRO_VERSION" ;;
+      esac
     elif [ -r /etc/os-release ]; then
       # shellcheck disable=SC1091
       . /etc/os-release
@@ -104,7 +108,9 @@ normalize_platform() {
     else
       die "Cannot identify this Linux distribution."
     fi
+    vedup_is_wsl && IS_WSL=1
     PLATFORM_NAME="$distro_name / $ARCH"
+    [ "$IS_WSL" = 0 ] || PLATFORM_NAME="$PLATFORM_NAME (WSL2)"
     case "$DISTRO" in ubuntu) PLATFORM_ADAPTER=ubuntu ;; amzn) PLATFORM_ADAPTER=amazon ;; *) die "Unsupported Linux distribution: $DISTRO" ;; esac
     if [ "$DISTRO_VERSION" != test ]; then
       case "$DISTRO/$DISTRO_VERSION" in
@@ -116,7 +122,7 @@ normalize_platform() {
   fi
   columns="$(tput cols 2>/dev/null || true)"
   case "$columns" in ''|*[!0-9]*) ;; *) [ "$columns" -ge 76 ] || [ "$columns" -le 24 ] || UI_WIDTH=$((columns - 4)) ;; esac
-  export OS ARCH DISTRO DISTRO_VERSION PLATFORM_ADAPTER
+  export OS ARCH DISTRO DISTRO_VERSION PLATFORM_ADAPTER IS_WSL
 }
 
 animated_download() {
@@ -138,9 +144,9 @@ animated_download() {
 prepare_gum() {
   local gum_os gum_arch asset checksum archive extracted
   [ "${TERM:-}" != dumb ] || return 0
-  if [ -n "${MACAUTOSETUP_GUM:-}" ] && [ -x "$MACAUTOSETUP_GUM" ]; then UI_TOOL="$MACAUTOSETUP_GUM"; return; fi
+  if [ -n "${VEDUP_GUM:-}" ] && [ -x "$VEDUP_GUM" ]; then UI_TOOL="$VEDUP_GUM"; return; fi
   if has gum; then UI_TOOL="$(command -v gum)"; return; fi
-  [ "${MACAUTOSETUP_NO_GUM_DOWNLOAD:-0}" != 1 ] || return 0
+  [ "${VEDUP_NO_GUM_DOWNLOAD:-0}" != 1 ] || return 0
   has curl && has tar || return 0
   [ "$OS" = macos ] && gum_os=Darwin || gum_os=Linux
   [ "$ARCH" = x64 ] && gum_arch=x86_64 || gum_arch=arm64
@@ -195,7 +201,7 @@ ui_choose() {
   local header="$1" answer index=1 option
   local -a options=()
   shift; options=("$@")
-  if [ -n "${MACAUTOSETUP_TEST_CHOICES:-}" ]; then
+  if [ -n "${VEDUP_TEST_CHOICES:-}" ]; then
     [ "$TEST_CHOICE_INDEX" -lt "${#TEST_CHOICES[@]}" ] || die "Test choice queue exhausted at: $header"
     UI_RESULT="${TEST_CHOICES[$TEST_CHOICE_INDEX]}"; TEST_CHOICE_INDEX=$((TEST_CHOICE_INDEX + 1)); return
   fi
@@ -226,7 +232,7 @@ ui_choose_many() {
   local header="$1" defaults="$2" answer index=1 option chosen="" marker
   local -a options=()
   shift 2; options=("$@")
-  if [ -n "${MACAUTOSETUP_TEST_CHOICES:-}" ]; then
+  if [ -n "${VEDUP_TEST_CHOICES:-}" ]; then
     [ "$TEST_CHOICE_INDEX" -lt "${#TEST_CHOICES[@]}" ] || die "Test choice queue exhausted at: $header"
     UI_RESULT="${TEST_CHOICES[$TEST_CHOICE_INDEX]}"; TEST_CHOICE_INDEX=$((TEST_CHOICE_INDEX + 1))
     [ "$UI_RESULT" != default ] || UI_RESULT="$defaults"; return
@@ -279,7 +285,7 @@ initialize_installer_state() {
   DOTFILES_ROOT="$VEDUP_CONFIG_WORKTREE"; export DOTFILES_ROOT
   state_detect_workflow
   [ "$STATE_FOUND" != 1 ] || load_saved_state
-  choices_load_or_migrate || die "Saved application choices are invalid."
+  choices_load_or_default || die "Saved application choices are invalid."
   choices_apply_environment || die "Saved application choices are invalid."
   WITH_PERSONAL_APPS="$CHOICES_OPTIONAL_BUNDLE"; choices_export
 }
@@ -395,7 +401,7 @@ show_plan_details() {
 }
 
 print_test_args() {
-  [ "${MACAUTOSETUP_INSTALLER_PRINT_ARGS:-0}" = 1 ] || return 1
+  [ "${VEDUP_INSTALLER_PRINT_ARGS:-0}" = 1 ] || return 1
   printf 'SETUP_ARGS'; printf ' %q' "${SETUP_ARGS[@]}"; printf '\n'
   printf 'CHOICES workstation=%s optional=%s overrides=%s\n' "$CHOICES_WORKSTATION_BUNDLE" \
     "$CHOICES_OPTIONAL_BUNDLE" "$(printf '%s' "$CHOICES_APP_OVERRIDES" | tr '\n' ',')"
@@ -494,11 +500,11 @@ run_home() {
 }
 
 main() {
-  if [ -z "${MACAUTOSETUP_TEST_CHOICES:-}" ] && { [ ! -t 0 ] || [ ! -t 1 ]; }; then
+  if [ -z "${VEDUP_TEST_CHOICES:-}" ] && { [ ! -t 0 ] || [ ! -t 1 ]; }; then
     die "The friendly interface needs a terminal. Use bin/setup flags for automation."
   fi
   normalize_platform
-  if [ -z "${MACAUTOSETUP_TEST_CHOICES:-}" ] && ! has gum; then printf 'Preparing the installer interface...\n'; fi
+  if [ -z "${VEDUP_TEST_CHOICES:-}" ] && ! has gum; then printf 'Preparing the installer interface...\n'; fi
   prepare_gum; ui_intro; ui_text "Detected: $PLATFORM_NAME"; initialize_installer_state
   case "$INSTALL_MODE" in
     sync) run_sync_flow 0 ;; customize) run_sync_flow 1 ;; apps-update) run_app_updates ;; advanced) run_advanced ;; home) run_home ;;

@@ -45,7 +45,7 @@ is_previous_vedup_link() {
   [ -L "$target" ] || return 1
   link="$(readlink "$target")"
   case "$link" in
-    *MacAutoSetup/dotfiles/*|*macautosetup/repo/dotfiles/*|*/vedup/releases/*/dotfiles/*|*/vedup/current/dotfiles/*|*/vedup/config/worktree/*) return 0 ;;
+    */vedup/releases/*/dotfiles/*|*/vedup/current/dotfiles/*|*/vedup/config/worktree/*) return 0 ;;
     *) return 1 ;;
   esac
 }

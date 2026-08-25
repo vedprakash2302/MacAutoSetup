@@ -147,7 +147,8 @@ if [ "$PARALLEL_JOBS" -lt 1 ] || [ "$PARALLEL_JOBS" -gt 8 ]; then
 fi
 
 detect_platform() {
-  OS="${MACAUTOSETUP_TEST_OS:-}"
+  IS_WSL=0
+  OS="${VEDUP_TEST_OS:-}"
   if [ -z "$OS" ]; then
     case "$(uname -s)" in
       Darwin) OS=macos ;;
@@ -156,7 +157,7 @@ detect_platform() {
     esac
   fi
 
-  ARCH="${MACAUTOSETUP_TEST_ARCH:-$(uname -m)}"
+  ARCH="${VEDUP_TEST_ARCH:-$(uname -m)}"
   case "$ARCH" in
     x64|x86_64|amd64) ARCH=x64 ;;
     arm64|aarch64) ARCH=arm64 ;;
@@ -164,9 +165,10 @@ detect_platform() {
   esac
 
   if [ "$OS" = linux ]; then
-    if [ -n "${MACAUTOSETUP_TEST_DISTRO:-}" ]; then
-      DISTRO="$MACAUTOSETUP_TEST_DISTRO"
-      DISTRO_VERSION="${MACAUTOSETUP_TEST_DISTRO_VERSION:-test}"
+    vedup_is_wsl && IS_WSL=1
+    if [ -n "${VEDUP_TEST_DISTRO:-}" ]; then
+      DISTRO="$VEDUP_TEST_DISTRO"
+      DISTRO_VERSION="${VEDUP_TEST_DISTRO_VERSION:-test}"
     else
       [ -r /etc/os-release ] || die "Cannot identify this Linux distribution."
       # shellcheck disable=SC1091
@@ -177,13 +179,13 @@ detect_platform() {
     case "$DISTRO" in
       ubuntu) PLATFORM_ADAPTER=ubuntu ;;
       amzn) PLATFORM_ADAPTER=amazon ;;
-      *) die "Unsupported Linux distribution for v1: $DISTRO" ;;
+      *) die "Unsupported Linux distribution: $DISTRO" ;;
     esac
     if [ "$DISTRO_VERSION" != test ]; then
       case "$DISTRO/$DISTRO_VERSION" in
         ubuntu/22.04|ubuntu/24.04|amzn/2023) ;;
         amzn/2) die "Amazon Linux 2 reached end-of-support on June 30, 2026. Migrate to Amazon Linux 2023 before running Vedup." ;;
-        *) die "Unsupported Linux release for v1: $DISTRO $DISTRO_VERSION" ;;
+        *) die "Unsupported Linux release: $DISTRO $DISTRO_VERSION" ;;
       esac
     fi
   else
@@ -191,6 +193,8 @@ detect_platform() {
     DISTRO_VERSION="$(sw_vers -productVersion 2>/dev/null || printf 'test')"
     PLATFORM_ADAPTER=macos
   fi
+
+  export IS_WSL
 
   if [ "$PROFILE" = auto ]; then
     if [ "$OS" = macos ]; then PROFILE=workstation; else PROFILE=server; fi
@@ -613,7 +617,7 @@ invoke_macos_settings() {
     if [ "$(uname -s)" = Darwin ]; then
       "$REPO_ROOT/dotfiles/macos/setup-commands.sh" --dry-run "$@"
     else
-      MACAUTOSETUP_TEST_OS=macos MACAUTOSETUP_TEST_MACOS_MAJOR=26 \
+      VEDUP_TEST_OS=macos VEDUP_TEST_MACOS_MAJOR=26 \
         "$REPO_ROOT/dotfiles/macos/setup-commands.sh" --dry-run "$@"
     fi
   else
@@ -741,7 +745,6 @@ run_scoped_operation() {
   SETUP_SUCCESS=1
   progress_finish
   plan_cleanup
-  state_cleanup
   setup_lock_release
 }
 
@@ -793,7 +796,7 @@ main() {
     [ "$SHELL_EXPLICIT" = 1 ] || CHANGE_SHELL="$STATE_CHANGE_SHELL"
   fi
   detect_platform
-  choices_load_or_migrate || die "Saved application choices are invalid."
+  choices_load_or_default || die "Saved application choices are invalid."
   choices_apply_environment || die "Saved application choices are invalid."
   if [ "$PROFILE_EXPLICIT" = 1 ] && [ -z "${VEDUP_WORKSTATION_BUNDLE:-}" ]; then
     [ "$PROFILE" = workstation ] && CHOICES_WORKSTATION_BUNDLE=1 || CHOICES_WORKSTATION_BUNDLE=0
@@ -869,7 +872,6 @@ main() {
     else "$REPO_ROOT/bin/doctor" --quick; fi
     printf 'Vedup: this machine is already synchronized; no changes were made.\n'
     plan_cleanup
-    state_cleanup
     return 0
   fi
 
@@ -995,7 +997,6 @@ main() {
   SETUP_SUCCESS=1
   progress_finish
   plan_cleanup
-  state_cleanup
   sudo_release
   setup_lock_release
 }

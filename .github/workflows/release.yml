@@ -84,6 +84,7 @@ jobs:
             -e "s/__VEDUP_RELEASE_REF__/$RELEASE_REF/g" \
             -e "s/__VEDUP_RELEASE_COMMIT__/$RELEASE_COMMIT/g" \
             -e "s/__VEDUP_ARCHIVE_SHA256__/$ARCHIVE_SHA256/g" \
+            -e "s|__VEDUP_RELEASE_REPOSITORY__|${{ github.repository }}|g" \
             bootstrap > dist/bootstrap
           chmod +x dist/bootstrap
           (cd dist && sha256sum bootstrap "vedup-${RELEASE_REF}.tar.gz" > checksums.txt)

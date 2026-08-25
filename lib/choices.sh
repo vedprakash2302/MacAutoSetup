@@ -64,7 +64,7 @@ choices_load() {
   export VEDUP_APP_OVERRIDES="$CHOICES_APP_OVERRIDES"
 }
 
-choices_load_or_migrate() {
+choices_load_or_default() {
   if [ -e "$VEDUP_CHOICES_FILE" ]; then
     choices_load "$VEDUP_CHOICES_FILE"
     return
@@ -121,17 +121,17 @@ choices_clear_matching_override() {
 }
 
 choices_app_selected() {
-  local scope="$1" provider="$2" identifier="$3" resource legacy_resource override default
+  local scope="$1" provider="$2" identifier="$3" resource short_resource override default
   resource="$provider:$identifier"
-  legacy_resource="$provider:${identifier##*/}"
+  short_resource="$provider:${identifier##*/}"
   case "$scope" in
     workstation) default="$CHOICES_WORKSTATION_BUNDLE" ;;
     optional) default="$CHOICES_OPTIONAL_BUNDLE" ;;
     *) return 1 ;;
   esac
   override="$(choices_override_value "$resource" 2>/dev/null || true)"
-  if [ -z "$override" ] && [ "$legacy_resource" != "$resource" ]; then
-    override="$(choices_override_value "$legacy_resource" 2>/dev/null || true)"
+  if [ -z "$override" ] && [ "$short_resource" != "$resource" ]; then
+    override="$(choices_override_value "$short_resource" 2>/dev/null || true)"
   fi
   [ "${override:-$default}" = 1 ]
 }
