@@ -67,7 +67,7 @@ PY
   forbidden_fork_name="Mac""AutoSetup"
   forbidden_state_name="mac""autosetup"
   forbidden_parent="N""Laundry"
-  if rg -n --hidden --glob '!.git/**' \
+  if grep -R -I -E --exclude-dir=.git \
       "$forbidden_fork_name|$forbidden_state_name|$forbidden_parent" "$REPO_ROOT" >/dev/null; then
     fail "the independent source tree still contains a fork or pre-Vedup identity"
   fi
@@ -674,7 +674,11 @@ EOF
   printf 'pending\n' > "$update_home/.local/state/vedup/transactions/interrupted/journal.tsv"
   printf 'base\n' > "$update_home/.local/share/vedup/config/base/sentinel"
   printf 'local edit\n' > "$update_home/.local/share/vedup/config/worktree/sentinel"
-  preserved_before="$(tar -C "$update_home" -cf - .local/state/vedup .local/share/vedup/config | test_sha256 /dev/stdin)"
+  preserved_before="$(
+    cd "$update_home"
+    find .local/state/vedup .local/share/vedup/config -type f -print | LC_ALL=C sort |
+      while IFS= read -r filepath; do printf '%s\t%s\n' "$filepath" "$(test_sha256 "$filepath")"; done
+  )"
   output="$(HOME="$update_home" PATH="$fake_bin:/usr/bin:/bin" VEDUP_TEST_BOOTSTRAP="$bootstrap_fixture" \
     VEDUP_TEST_ARCHIVE="$archive" "$REPO_ROOT/bin/update" 2>&1)"
   [[ "$output" == *"Vedup updated to v9.9.9"* ]] || fail "vedup update did not activate the verified release"
@@ -683,7 +687,11 @@ EOF
     "$update_home/.local/share/vedup/releases/v9.9.9-000000000000" ] || fail "vedup update did not switch current atomically"
   [ "$(readlink "$update_home/.local/share/vedup/applied")" = "$update_home/.local/share/vedup/old-release" ] || \
     fail "vedup update changed the applied machine policy before synchronization"
-  preserved_after="$(tar -C "$update_home" -cf - .local/state/vedup .local/share/vedup/config | test_sha256 /dev/stdin)"
+  preserved_after="$(
+    cd "$update_home"
+    find .local/state/vedup .local/share/vedup/config -type f -print | LC_ALL=C sort |
+      while IFS= read -r filepath; do printf '%s\t%s\n' "$filepath" "$(test_sha256 "$filepath")"; done
+  )"
   [ "$preserved_before" = "$preserved_after" ] || \
     fail "vedup update changed current state, configuration, choices, resources, or an interrupted transaction"
   [[ "$output" == *"https://github.com/vedprakash2302/Vedup"* ]] || \
