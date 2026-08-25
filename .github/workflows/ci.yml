@@ -35,6 +35,9 @@ jobs:
             sudo apt-get update
             sudo apt-get install -y shellcheck stow zsh
           else
+            # GitHub's macOS image can retain an unrelated untrusted AWS tap;
+            # remove it from this disposable runner before invoking Homebrew.
+            brew untap aws/tap 2>/dev/null || true
             brew install shellcheck stow
           fi
       - run: ./tests/test.sh
