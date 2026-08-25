@@ -23,6 +23,26 @@ die() {
 }
 has() { command -v "$1" >/dev/null 2>&1; }
 
+vedup_is_wsl() {
+  [ "${VEDUP_TEST_WSL:-0}" = 1 ] || [ -n "${WSL_INTEROP:-}" ] ||
+    grep -qi microsoft /proc/sys/kernel/osrelease 2>/dev/null
+}
+
+vedup_repository() {
+  local repository="${VEDUP_REPOSITORY:-}"
+  if [ -z "$repository" ]; then
+    [ -r "$REPO_ROOT/repository.env" ] || { warn "Vedup repository metadata is unavailable."; return 1; }
+    # shellcheck disable=SC1091
+    . "$REPO_ROOT/repository.env"
+    repository="${VEDUP_DEFAULT_REPOSITORY:-}"
+  fi
+  [[ "$repository" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || {
+    warn "Vedup repository metadata is invalid."
+    return 1
+  }
+  printf '%s\n' "$repository"
+}
+
 mise_binary() {
   if [ -x "$HOME/.local/bin/mise" ]; then
     printf '%s\n' "$HOME/.local/bin/mise"
@@ -58,7 +78,7 @@ vedup_launcher_is_managed() {
   if [ -L "$target" ]; then
     link="$(readlink "$target")"
     case "$link" in
-      *MacAutoSetup/bin/vedup|*macautosetup/repo/bin/vedup|*/vedup/releases/*/bin/vedup|*/vedup/current/bin/vedup) return 0 ;;
+      */vedup/releases/*/bin/vedup|*/vedup/current/bin/vedup) return 0 ;;
     esac
     return 1
   fi
@@ -145,7 +165,6 @@ setup_cleanup() {
   set +e
   progress_stop_activity
   if type plan_cleanup >/dev/null 2>&1; then plan_cleanup; fi
-  if type state_cleanup >/dev/null 2>&1; then state_cleanup; fi
   if [ "$exit_code" -ne 0 ] && [ "${SETUP_SUCCESS:-0}" != 1 ]; then
     if type state_transaction_is_committed >/dev/null 2>&1 && state_transaction_is_committed; then transaction_committed=1; fi
     if [ "$transaction_committed" = 1 ]; then
@@ -336,12 +355,12 @@ progress_init() {
   case "$terminal_columns" in ''|*[!0-9]*) ;; *) PROGRESS_COLUMNS="$terminal_columns" ;; esac
   PROGRESS_STAGE_NAME="Starting setup"
   PROGRESS_STAGE_STARTED="$(date +%s)"
-  SETUP_LOG_FILE="${VEDUP_LOG_FILE:-${MACAUTOSETUP_LOG_FILE:-${XDG_STATE_HOME:-$HOME/.local/state}/vedup/logs/$(date -u +%Y%m%dT%H%M%SZ)-$$.log}}"
+  SETUP_LOG_FILE="${VEDUP_LOG_FILE:-${XDG_STATE_HOME:-$HOME/.local/state}/vedup/logs/$(date -u +%Y%m%dT%H%M%SZ)-$$.log}"
   export SETUP_LOG_FILE
   if [ "${DRY_RUN:-0}" != 1 ]; then
     mkdir -p "$(dirname "$SETUP_LOG_FILE")"
     exec 3>&1
-    if { [ -t 1 ] || [ "${MACAUTOSETUP_TEST_COMPACT:-0}" = 1 ]; } && \
+    if { [ -t 1 ] || [ "${VEDUP_TEST_COMPACT:-0}" = 1 ]; } && \
       [ "${VERBOSE:-0}" != 1 ] && [ "${TERM:-}" != dumb ]; then
       PROGRESS_COMPACT=1
       PROGRESS_FD=3
@@ -393,7 +412,7 @@ progress_start_activity() {
       done
       printf '\0338' >&3
       frame=$(((frame + 1) % ${#frames[@]}))
-      sleep "${MACAUTOSETUP_ACTIVITY_INTERVAL:-0.5}"
+      sleep "${VEDUP_ACTIVITY_INTERVAL:-0.5}"
     done
   ) &
   PROGRESS_ACTIVITY_PID=$!
@@ -548,9 +567,6 @@ progress_finish() {
       printf 'Recovery snapshots:\n'
       [ -z "$latest_dotfiles" ] || printf '  Dotfiles:          %s\n' "$latest_dotfiles"
       [ -z "$latest_macos" ] || printf '  macOS preferences: %s\n' "$latest_macos"
-    fi
-    if [ -d "${VEDUP_LEGACY_ROOT:-${XDG_DATA_HOME:-$HOME/.local/share}/macautosetup/repo}" ]; then
-      printf 'Legacy recovery checkout retained: %s\n' "${VEDUP_LEGACY_ROOT:-${XDG_DATA_HOME:-$HOME/.local/share}/macautosetup/repo}"
     fi
     if [ "${WITH_DOCKER:-0}" = 1 ] && [ "${OS:-}" = linux ]; then
       printf 'Action required: log out and back in once before using Docker without sudo.\n'

@@ -11,12 +11,14 @@ jobs:
   validate-macos:
     runs-on: macos-15
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.13"
       - name: Install test dependencies
-        run: brew install shellcheck stow
+        run: |
+          brew untap aws/tap 2>/dev/null || true
+          brew install shellcheck stow
       - run: ./tests/test.sh
       - run: ./tests/brewfile-validation.sh
 
@@ -26,7 +28,7 @@ jobs:
     steps:
       - name: Install checkout and test dependencies
         run: dnf install -y git-core bash findutils gzip tar
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - run: ./tests/amazon-linux.sh
 
   canary-safe-sync-twice:
@@ -37,7 +39,7 @@ jobs:
         os: [ubuntu-24.04, macos-15]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Run terminal-profile synchronization twice
         run: |
           ./bin/setup --non-interactive --profile server --no-macos-defaults --no-shell-change
@@ -48,10 +50,10 @@ jobs:
     needs: [validate-macos, validate-amazon-linux, canary-safe-sync-twice]
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.13"
       - name: Install test dependencies
@@ -84,6 +86,7 @@ jobs:
             -e "s/__VEDUP_RELEASE_REF__/$RELEASE_REF/g" \
             -e "s/__VEDUP_RELEASE_COMMIT__/$RELEASE_COMMIT/g" \
             -e "s/__VEDUP_ARCHIVE_SHA256__/$ARCHIVE_SHA256/g" \
+            -e "s|__VEDUP_RELEASE_REPOSITORY__|${{ github.repository }}|g" \
             bootstrap > dist/bootstrap
           chmod +x dist/bootstrap
           (cd dist && sha256sum bootstrap "vedup-${RELEASE_REF}.tar.gz" > checksums.txt)

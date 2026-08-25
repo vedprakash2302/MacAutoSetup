@@ -1,140 +1,81 @@
 # Vedup
 
-Vedup sets up a comfortable development environment on macOS and Linux, then
-keeps it synchronized without taking over software or settings it does not own.
+Vedup is a safe machine bootstrap and development-environment synchronizer for
+macOS and Linux. It inventories first, presents one understandable plan, and
+changes only missing or explicitly Vedup-managed resources.
 
-## Set up a machine
+## Start here
 
-Run one command:
-
-```sh
-bash -c "$(curl -fsSL https://github.com/vedprakash2302/MacAutoSetup/releases/latest/download/bootstrap)"
+```bash
+bash -c "$(curl -fsSL https://github.com/vedprakash2302/Vedup/releases/latest/download/bootstrap)"
 ```
 
-Vedup detects the operating system, inspects what is already present, and shows
-one short review. Choose **Set up this machine** and it installs only what is
-missing. You do not need to remember separate setup commands or flags.
+The same command works on a fresh machine and an existing Vedup machine. In an
+interactive terminal, choose **Set up this machine** for the recommended plan
+or **Customize** to change application and tooling bundles.
 
-On a previously configured machine, run the same command again. Vedup restores
-your choices and either shows only the work that remains or says that everything
-is current. It does not reinstall every tool.
+Supported platforms:
 
-Supported systems:
-
-- macOS on Apple Silicon or Intel;
+- macOS on Apple Silicon and Intel;
 - Ubuntu 22.04 and 24.04 on x86_64 or ARM64;
+- Ubuntu 22.04 and 24.04 under WSL2;
 - Amazon Linux 2023 on x86_64 or ARM64.
 
-## What the installer looks like
+## Daily use
 
-The first screen contains a plain-language summary:
+Run `vedup` for the home menu. Direct commands are also available:
 
-```text
-Ready to set up this Mac
-
-✓ Development tools, terminal configuration and Zsh
-✓ Recommended Mac applications
-✓ Safe macOS preferences
-
-Install       18 missing items
-Configure      3 setting groups
-Already ready 22 existing items preserved
-
-Set up this machine   Customize   Show details   Exit
+```bash
+vedup sync          # apply missing tools and managed configuration changes
+vedup customize     # change saved bundles and application selections
+vedup update        # update only the Vedup CLI
+vedup save          # review local configuration/app changes for capture
+vedup apps update   # review macOS GUI updates
+vedup doctor        # diagnose the active installation
+vedup advanced      # high-impact macOS settings
 ```
 
-**Customize** opens a small set of bundles such as Recommended Apps, AWS tools,
-Docker, and Optional Apps. On macOS, **Choose individual applications** lets you
-select every app separately. No application is compulsory. New apps added to a
-future Vedup release inherit the bundle choice, while your individual overrides
-remain saved.
+`vedup update` verifies an immutable release and advances only the CLI pointer.
+It never installs applications or changes the shell, dotfiles, runtimes, or
+system preferences. `vedup sync` is always a separate action.
 
-High-impact macOS changes—Dock replacement, shortcut replacement, and
-experimental preferences—live under **Advanced**. Existing selections are
-preserved, but a normal setup never puts these controls in the main flow.
+## What Vedup manages
 
-During installation, a fixed dashboard shows the current task, elapsed time,
-progress, and the latest five activity lines. Full output is written to:
+The terminal profile includes Zsh, tmux, Neovim, Starship, Mise-managed Node
+and Python, GitHub CLI, lazygit, modern search/file tools, completions,
+autosuggestions, syntax highlighting, history search, Git aliases, and pinned
+Zsh/tmux plugins.
 
-```text
-~/.local/state/vedup/logs/
-```
+The macOS workstation bundle is declared once in
+[profiles/macos/apps.tsv](profiles/macos/apps.tsv). It includes Ghostty, Zed,
+Cursor, Docker Desktop, Chrome, ChatGPT, Dia, Raycast, Aerospace, Borders,
+Shottr, Jump Desktop, Bitwarden CLI, Focus, Linear, PDFgear, T3 Code Nightly,
+and the tracked supporting applications and font.
 
-## After installation
+## Safety model
 
-Run `vedup` with no arguments for the friendly home menu:
+- Planning happens before sudo or mutation.
+- Compatible external software is retained rather than adopted or replaced.
+- General Homebrew, APT, DNF/YUM, App Store and operating-system upgrades are
+  outside normal synchronization.
+- Existing GUI applications are upgraded only through explicit review.
+- Git credentials, `.gitconfig`, credential helpers and Keychain permissions
+  are never managed.
+- Dotfiles and macOS preferences are backed up and restored after a failed
+  configuration transaction.
+- The `current` CLI release and successfully `applied` machine policy are
+  separate, so updating Vedup cannot silently change runtimes.
 
-```text
-Sync this machine
-Customize setup
-Save local changes
-Update Vedup
-Update applications        # macOS
-Diagnose a problem
-Advanced                   # macOS
-Exit
-```
+Installation uses a compact progress dashboard with five recent activity lines.
+Detailed logs are stored under `~/.local/state/vedup/logs/`.
 
-The command names are optional shortcuts, not steps you must memorize:
+## Documentation
 
-```sh
-vedup sync
-vedup customize
-vedup update
-vedup save
-vedup apps update
-vedup doctor
-vedup advanced
-```
-
-`vedup update` updates only the Vedup program. It downloads and verifies the
-latest immutable release, switches the `current` link atomically, and leaves
-applications, tools, dotfiles, and system settings untouched. Run `vedup sync`
-separately when you want to apply setup changes introduced by that release.
-
-`vedup save` reviews local edits and newly installed applications, excludes
-secret-like files, runs a pinned secret scan and the full test suite, and saves
-the selected changes on a dedicated branch. With publishing enabled it opens a
-**draft** pull request; it never merges, tags, or releases captured changes.
-
-## Safe by default
-
-Vedup inventories before it changes anything. A normal sync:
-
-- installs missing software;
-- updates only release-pinned tools and configuration owned by Vedup;
-- preserves compatible externally installed software;
-- preserves unselected software rather than uninstalling it;
-- never performs general Homebrew, APT, DNF/YUM, App Store, or OS upgrades;
-- never silently upgrades an installed GUI application;
-- never edits `.gitconfig`, Git credential helpers, GitHub credentials, or
-  Keychain permissions.
-
-On macOS, Vedup uses Apple Command Line Tools Git. An existing Homebrew Git is
-left untouched. GUI updates are available separately through
-`vedup apps update` and begin unchecked.
-
-Configuration linking and macOS preference changes are backed up and rolled
-back if verification fails. Package installation is additive and resumable.
-The `current` CLI may update independently, while the separate `applied`
-release changes only after synchronization passes its health check.
-
-## What gets installed
-
-The terminal environment includes Git, Zsh, tmux, Neovim, Starship, Mise,
-Node, Python, modern search/file tools, GitHub CLI, lazygit, shell completions,
-autosuggestions, syntax highlighting, history search, Git aliases, and the
-tracked Zsh/tmux plugins.
-
-The Recommended Mac Apps bundle includes Ghostty, Cursor, Zed, Docker Desktop,
-Chrome, Dia, ChatGPT, Raycast, Aerospace, Borders, Shottr, Jump Desktop,
-Hidden Bar, Logi Options+, Bitwarden CLI, Amphetamine, Peek, Focus, Linear,
-PDFgear, T3 Code Nightly, and the JetBrains Mono Nerd Font. The exact,
-deduplicated inventory is [profiles/macos/apps.tsv](profiles/macos/apps.tsv).
-
-## More detail
-
-- [Automation and flags](docs/automation.md)
-- [Safety, state, recovery, and reruns](docs/safety.md)
+- [Automation](docs/automation.md)
+- [Safety and recovery](docs/safety.md)
 - [Architecture](docs/architecture.md)
-- [Contributing and releasing](docs/contributing.md)
+- [Contributing and releases](docs/contributing.md)
+
+Vedup is distributed under the [MIT License](LICENSE). Third-party components
+and configuration sources are listed in
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

@@ -1,6 +1,4 @@
-# Keep generated dependency lockfiles committed for reproducible machines.
-
-# Secrets and machine-local state must never enter this public repository.
+# Local credentials and private overrides never belong in source control.
 .env
 .env.*
 !.env.example
@@ -27,7 +25,7 @@ history
 *.history
 .DS_Store
 
-# Vedup runtime data belongs under XDG state/data directories, not source.
+# Generated output and operating-system metadata.
 .vedup-state/
 logs/
 backups/

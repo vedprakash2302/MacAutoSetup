@@ -171,7 +171,7 @@ capture_discover_preferences() {
 }
 
 state_load "$VEDUP_STATE_FILE" || die "Run Vedup Safe sync once before capturing local changes."
-choices_load_or_migrate || die "Saved application choices are invalid."
+choices_load_or_default || die "Saved application choices are invalid."
 PROFILE="$STATE_PROFILE" WITH_PERSONAL_APPS="$STATE_WITH_PERSONAL_APPS"
 read -r -a STOW_PACKAGES <<< "$STATE_STOW_PACKAGES"
 if [ ! -d "$VEDUP_CONFIG_BASE" ] || [ ! -d "$VEDUP_CONFIG_WORKTREE" ]; then
@@ -251,7 +251,8 @@ AUTHOR_REPO="$SOURCE_DIR"
 if [ ! -d "$AUTHOR_REPO/.git" ]; then
   [ ! -e "$AUTHOR_REPO" ] || die "Author checkout path exists but is not a Git repository: $AUTHOR_REPO"
   mkdir -p "$(dirname "$AUTHOR_REPO")"
-  git clone https://github.com/vedprakash2302/MacAutoSetup.git "$AUTHOR_REPO"
+  capture_repository="$(vedup_repository)" || die "Vedup's author repository is invalid."
+  git clone "https://github.com/${capture_repository}.git" "$AUTHOR_REPO"
 fi
 [ -z "$(git -C "$AUTHOR_REPO" status --porcelain)" ] || die "Author checkout has uncommitted changes: $AUTHOR_REPO"
 git -C "$AUTHOR_REPO" fetch origin --prune --tags

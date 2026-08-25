@@ -1,9 +1,9 @@
-# Fonts
+# Typography
 font-family = "JetBrains Mono"
 font-size = 14
 font-thicken = true
 
-# window
+# Window
 window-width = 160
 window-height = 50
 window-padding-y = 5, 0
@@ -14,7 +14,7 @@ window-save-state = always
 window-step-resize = false
 confirm-close-surface = false
 
-# Theme
+# Appearance
 theme = GruvboxHard
 bold-is-bright = true
 # background-opacity-cells = true
@@ -27,12 +27,11 @@ adjust-cell-height = 10%
 adjust-cell-width = -5%
 adjust-cursor-height = -15%
 
-
-# Keybindings
+# Shortcuts
 keybind = global:cmd+option+grave_accent=toggle_quick_terminal
 keybind = cmd+comma=text:nvim ~/.config/ghostty/config\n
 
-# behavior
+# Session behavior
 auto-update = check
 auto-update-channel = stable
 quit-after-last-window-closed = true
@@ -41,17 +40,16 @@ shell-integration-features = no-cursor
 cursor-click-to-move = true
 command = /bin/zsh -c "~/.scripts/tmux-on-launch.sh"
 
-# macos
+# macOS
 macos-option-as-alt = true
-#Available values are: "native", "transparent", "tabs", and "hidden".
-macos-titlebar-style = hidden 
+macos-titlebar-style = hidden
 macos-shortcuts = allow
 macos-non-native-fullscreen = padded-notch
 
-# clipboard
+# Clipboard
 copy-on-select = clipboard
 clipboard-trim-trailing-spaces = true
 
-# Quick Terminal
-quick-terminal-position = right 
+# Quick terminal
+quick-terminal-position = right
 quick-terminal-autohide = false

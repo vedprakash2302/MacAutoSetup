@@ -15,13 +15,14 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 . "$REPO_ROOT/lib/config.sh"
 
 state_load "$VEDUP_STATE_FILE" || die "Vedup has not completed a managed synchronization on this machine."
-choices_load_or_migrate || die "Saved application choices are invalid."
+choices_load_or_default || die "Saved application choices are invalid."
 PROFILE="$STATE_PROFILE" WITH_PERSONAL_APPS="$STATE_WITH_PERSONAL_APPS"
 read -r -a STOW_PACKAGES <<< "$STATE_STOW_PACKAGES"
 config_scan
 
 printf 'Vedup status\n\n'
 printf 'Release:       %s (%s)\n' "$STATE_RELEASE" "${STATE_COMMIT:0:12}"
+printf 'Updates:       https://github.com/%s\n' "$(vedup_repository)"
 current_pointer="${XDG_DATA_HOME:-$HOME/.local/share}/vedup/current"
 applied_pointer="${XDG_DATA_HOME:-$HOME/.local/share}/vedup/applied"
 if [ -L "$current_pointer" ] && [ -L "$applied_pointer" ] && \

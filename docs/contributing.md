@@ -3,8 +3,8 @@
 Remote `AUTHOR_MODE` is unsupported. Work from a separate clone:
 
 ```sh
-git clone https://github.com/vedprakash2302/MacAutoSetup.git
-cd MacAutoSetup
+git clone https://github.com/vedprakash2302/Vedup.git
+cd Vedup
 ./bin/install
 ```
 
@@ -29,8 +29,8 @@ history with redaction enabled. If a credential is ever suspected, revoke or
 rotate it first; deleting it from a later commit is not sufficient.
 
 The test suite isolates HOME, state, cache, inventory, and package-manager
-fixtures. It covers fresh, partial, externally configured, managed, migrated,
-and interrupted states, plus the invariant that a second safe sync is a no-op.
+fixtures. It covers fresh, partial, externally configured, managed and
+interrupted states, plus the invariant that a second safe sync is a no-op.
 
 The disposable canary workflow uses GitHub-hosted macOS and Linux runners; no
 spare Mac is required. Before a release, run it from Actions or with:

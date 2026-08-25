@@ -15,16 +15,6 @@ CONFIG_STAGE_ROOT=""
 
 config_entry_exists() { [ -e "$1" ] || [ -L "$1" ]; }
 
-config_previous_vedup_link() {
-  local link="$1" target
-  [ -L "$link" ] || return 1
-  target="$(readlink "$link")"
-  case "$target" in
-    *MacAutoSetup/dotfiles/*|*macautosetup/repo/dotfiles/*|*/vedup/releases/*/dotfiles/*|*/vedup/current/dotfiles/*|*/vedup/config/worktree/*) return 0 ;;
-    *) return 1 ;;
-  esac
-}
-
 config_entry_same() {
   local left="$1" right="$2"
   config_entry_exists "$left" && config_entry_exists "$right" || return 1
@@ -42,31 +32,6 @@ config_copy_entry() {
   mkdir -p "$(dirname "$destination")"
   rm -f "$destination"
   cp -P "$source" "$destination"
-}
-
-config_copy_legacy_link_contents() {
-  local source="$1" destination="$2" link_value source_dir resolved_dir resolved
-  local legacy_root legacy_dotfiles
-  [ -L "$source" ] || return 1
-  legacy_root="${VEDUP_LEGACY_ROOT:-${XDG_DATA_HOME:-$HOME/.local/share}/macautosetup/repo}"
-  [ -d "$legacy_root/dotfiles" ] || return 1
-  legacy_dotfiles="$(cd -P "$legacy_root/dotfiles" && pwd)" || return 1
-  source_dir="$(cd -P "$(dirname "$source")" && pwd)" || return 1
-  link_value="$(readlink "$source")" || return 1
-  case "$link_value" in
-    /*) ;;
-    *) link_value="$source_dir/$link_value" ;;
-  esac
-  resolved_dir="$(cd -P "$(dirname "$link_value")" 2>/dev/null && pwd)" || return 1
-  resolved="$resolved_dir/$(basename "$link_value")"
-  case "$resolved" in
-    "$legacy_dotfiles"/*) ;;
-    *) return 1 ;;
-  esac
-  [ -f "$resolved" ] || return 1
-  mkdir -p "$(dirname "$destination")"
-  rm -f "$destination"
-  cp "$resolved" "$destination"
 }
 
 config_path_list() {
@@ -131,22 +96,13 @@ config_record_conflict() {
 }
 
 config_seed_new_workspace() {
-  local package path target staged
+  local package
   mkdir -p "$CONFIG_STAGE_ROOT/base" "$CONFIG_STAGE_ROOT/worktree"
   for package in "${STOW_PACKAGES[@]}"; do
     [ -d "$REPO_ROOT/dotfiles/$package" ] || continue
     cp -R "$REPO_ROOT/dotfiles/$package" "$CONFIG_STAGE_ROOT/base/$package"
     cp -R "$REPO_ROOT/dotfiles/$package" "$CONFIG_STAGE_ROOT/worktree/$package"
   done
-  # During migration preserve bytes currently exposed by previous Vedup links.
-  # Ambiguous old-release values are treated conservatively as local intent.
-  while IFS= read -r path; do
-    target="$HOME/${path#*/}"
-    staged="$CONFIG_STAGE_ROOT/worktree/$path"
-    if [ -L "$target" ] && config_previous_vedup_link "$target"; then
-      config_copy_legacy_link_contents "$target" "$staged" || return 1
-    fi
-  done < <(config_path_list)
 }
 
 config_merge_workspace() {

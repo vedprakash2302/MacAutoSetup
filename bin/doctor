@@ -103,7 +103,7 @@ if [ "$STATE_FOUND" = 1 ]; then verify_dotfile_links; fi
 if [ -f "$HOME/.local/bin/vedup" ] && grep -Fqx '# vedup-managed-launcher-v2' "$HOME/.local/bin/vedup" 2>/dev/null; then
   ok "Vedup command launcher is installed"
 elif [ -L "$HOME/.local/bin/vedup" ]; then
-  note "Legacy Vedup command symlink is installed and will be replaced by the stable launcher"
+  note "An older Vedup command symlink is installed and will be replaced by the stable launcher"
 else
   fail "Vedup command launcher is missing from ~/.local/bin"
 fi

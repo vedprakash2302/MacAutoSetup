@@ -1,10 +1,11 @@
-# Keep startup deterministic: configuration never downloads or installs anything.
-zsh_module_dir="$HOME/.zsh.d"
+# Vedup's shell is assembled from small, independently editable modules. Shell
+# startup is deliberately offline: installation and updates happen via `vedup`.
+typeset -g VEDUP_ZSH_MODULES="$HOME/.zsh.d"
 
 # Environment and completion paths must exist before command initialization.
-[[ -r "$zsh_module_dir/env.sh" ]] && source "$zsh_module_dir/env.sh"
-[[ -r "$zsh_module_dir/completions.sh" ]] && source "$zsh_module_dir/completions.sh"
-[[ -r "$zsh_module_dir/init-cache.sh" ]] && source "$zsh_module_dir/init-cache.sh"
+[[ -r "$VEDUP_ZSH_MODULES/env.sh" ]] && source "$VEDUP_ZSH_MODULES/env.sh"
+[[ -r "$VEDUP_ZSH_MODULES/completions.sh" ]] && source "$VEDUP_ZSH_MODULES/completions.sh"
+[[ -r "$VEDUP_ZSH_MODULES/init-cache.sh" ]] && source "$VEDUP_ZSH_MODULES/init-cache.sh"
 
 if [[ -o interactive ]]; then
   (( $+functions[vedup_init_completions] )) && vedup_init_completions
@@ -38,7 +39,7 @@ if [[ -o interactive ]]; then
 
   # Load every modular file, including user-added modules, while keeping the
   # early and final modules in their required positions.
-  for config_path in "$zsh_module_dir"/*.sh(N); do
+  for config_path in "$VEDUP_ZSH_MODULES"/*.sh(N); do
     case "${config_path:t}" in
       env.sh|completions.sh|init-cache.sh|plugins.sh) continue ;;
     esac
@@ -47,10 +48,10 @@ if [[ -o interactive ]]; then
 
   [[ -r "$HOME/.zshrc.local" ]] && source "$HOME/.zshrc.local"
   # Widgets and syntax highlighting must load after every other integration.
-  [[ -r "$zsh_module_dir/plugins.sh" ]] && source "$zsh_module_dir/plugins.sh"
+  [[ -r "$VEDUP_ZSH_MODULES/plugins.sh" ]] && source "$VEDUP_ZSH_MODULES/plugins.sh"
 fi
 
-unset zsh_module_dir config_path VEDUP_INIT_CACHE_FILE VEDUP_ZSH_REFRESH_CACHE
+unset config_path VEDUP_INIT_CACHE_FILE VEDUP_ZSH_REFRESH_CACHE
 
 # Keep the startup file successful when optional local configuration is absent.
 true

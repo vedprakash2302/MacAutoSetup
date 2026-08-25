@@ -2,7 +2,7 @@
 
 set -Eeuo pipefail
 
-# Resolve legacy symlink launchers before deriving the release root. Bash sets
+# Resolve older symlink launchers before deriving the release root. Bash sets
 # BASH_SOURCE to the path used to invoke a script, so calculating the parent of
 # ~/.local/bin/vedup otherwise incorrectly treats ~/.local as the repository.
 script_source="${BASH_SOURCE[0]}"

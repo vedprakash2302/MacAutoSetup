@@ -6,7 +6,7 @@ and deliberate unattended setup.
 Pass them after `--`:
 
 ```sh
-bash -c "$(curl -fsSL https://github.com/vedprakash2302/MacAutoSetup/releases/latest/download/bootstrap)" -- \
+bash -c "$(curl -fsSL https://github.com/vedprakash2302/Vedup/releases/latest/download/bootstrap)" -- \
   --non-interactive --profile server --with-aws
 ```
 

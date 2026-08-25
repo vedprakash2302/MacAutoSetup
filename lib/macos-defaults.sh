@@ -80,8 +80,8 @@ macos_defaults() {
 }
 
 macos_major_version() {
-  if [ -n "${MACAUTOSETUP_TEST_MACOS_MAJOR:-}" ]; then
-    printf '%s\n' "$MACAUTOSETUP_TEST_MACOS_MAJOR"
+  if [ -n "${VEDUP_TEST_MACOS_MAJOR:-}" ]; then
+    printf '%s\n' "$VEDUP_TEST_MACOS_MAJOR"
   else
     sw_vers -productVersion | awk -F. '{print $1}'
   fi
@@ -93,8 +93,8 @@ require_supported_macos_internals() {
   case "$major" in
     14|15|26) ;;
     *)
-      [ "${MACAUTOSETUP_ALLOW_UNTESTED_MACOS:-0}" = 1 ] || \
-        macos_die "Undocumented preferences are untested on macOS $major. Set MACAUTOSETUP_ALLOW_UNTESTED_MACOS=1 to override."
+      [ "${VEDUP_ALLOW_UNTESTED_MACOS:-0}" = 1 ] || \
+        macos_die "Undocumented preferences are untested on macOS $major. Set VEDUP_ALLOW_UNTESTED_MACOS=1 to override."
       macos_warn "Applying undocumented preferences on untested macOS $major."
       ;;
   esac

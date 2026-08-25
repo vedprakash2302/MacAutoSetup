@@ -12,7 +12,6 @@ export VEDUP_ROOT="${VEDUP_APPLIED_RELEASE:-${XDG_DATA_HOME:-$HOME/.local/share}
 if [[ ! -r "$VEDUP_ROOT/mise.toml" && -r "$VEDUP_CLI_ROOT/mise.toml" ]]; then
   VEDUP_ROOT="$VEDUP_CLI_ROOT"
 fi
-export MACAUTOSETUP_ROOT="$VEDUP_ROOT" # Deprecated compatibility alias.
 [[ -r "$VEDUP_ROOT/mise.toml" ]] && export MISE_CONFIG_FILE="$VEDUP_ROOT/mise.toml"
 
 if (( $+commands[nvim] )); then
